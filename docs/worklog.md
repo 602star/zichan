@@ -2,6 +2,26 @@
 
 记录项目的重要改动、原因与验证方式，按时间倒序排列。旧条目反映当时状态；现行行为以对应主题文档和代码为准。历史条目提到的已删除文件仍可从 Git 历史查看。
 
+## 2026-11-27 — 0.7.7 工作区提交与发布准备
+
+- 按用户要求汇总当前工作区的报表通知、邮件 HTML 及前后台体验改动，版本统一为 0.7.7；发布说明补充用户可见变化与 0.7.6 过渡升级说明。0.7.6 已经通过既有发布工作流并正式发布，没有取消或改写其标签与产物。
+- 简短本地检查：核心 202 项、Web 997 项、报表通知及更新相关服务端 19 项通过；服务端与 Web 构建、全仓类型检查、Lint 和发布一致性通过。清理界面迁移遗留的 3 个未使用导入。
+- 后台浏览器 4 项回归全部通过，覆盖电脑、手机、深色与读取异常。用例适配新“未保存改动”提示及独立“运行与环境”分组，同时明确断言提示可见，保留设置保存与草稿保护断言；为操作增加 15 秒超时，避免定位失败时长时间等待。实际候选更新包 65830931 字节，仍低于旧版 64 MiB。
+- 提交工作区并触发 `v0.7.7` 发布流程；正式构件与发布结果完成后补记。
+
+## 2026-11-27 — 前后台用户视角 UX/UI 专项优化
+
+- 前台用户路径：登录页移除硬编码 `system-ui` 字体、补充 `<BrandMark />` 品牌抬头、密码显隐切换与折叠式离线说明，并在无异常时隐藏冗余的「重试连接」；`store.tsx`、`FirstUseModeGate.tsx`、`FirstRunWizard.tsx`、`FirstRemoteLedgerRestoreGate.tsx` 与 `PreviewStoreProvider.tsx` 全面移除残留硬编码 `system-ui` 字体，首次模式选择页改用 `<BrandMark />` 与 `.zc-btn`，解锁/异常重置全部改用 `ConfirmDialog`；流水页保留长分类列宽同时拉大右对齐「金额」与左对齐「摘要」列间距，全折叠时隐藏空悬表头、≤2 天且 ≤10 笔默认展开，将快捷记账模板栏移至加载状态下方并加「快速记一笔：」前缀，筛选按钮文案改为「筛选（N）▾ / 收起筛选 ▴」消除歧义；流水页与报表页双环支出构成在未下钻时右侧显示二级细分引导占位，并为净额 0 元的退款抵消项补齐标注；物品清单顶部统计条补齐 `aria-pressed` 选中高亮，表格勾选框接入 `.zc-check-target`；资金账户页将重名按钮改为「在流水页筛选查看」并支持点击/键盘打开流水行；我的账号与同步页进度条改用主题语义条 `.zc-quota-meter`，报错改用 `CardAlert`，退出按钮加危险态，账号安全设备列表补齐 `.zc-btn` 并在展开时自动加载；日历编辑弹窗放弃确认改为 `ConfirmDialog`；`TimelineExplorer` 按日视图改用 `CalendarDatePicker`；快捷分类收支切换改用标准 `.zc-btn`。
+- 管理后台运维路径：告警中心将筛选栏与「告警记录」置顶于「通知投递」之前、合并冗余空态并将 11 列精简为 7 列；用户详情页修复 `<PanelIndex>` 错放于加载失败分支的缺陷、将「用户支持摘要」前置到「处理该用户」之前并本地化全后台残留 `accountId` / `Request ID` 为「账号 ID」/「请求 ID」；后台 `Button` 新增 `primary`/`danger` 变体用于设置保存、邀请生成、任务创建、筛选主查询（日志/用户/会话）、2FA/改密与危险确认；系统设置将原先在每个分组下方重复渲染的「版本与安全设置 / 密钥状态 / 运行环境」收敛为独立「运行与环境」Tab 并本地化 `true`/`open`/`managed` 原始值，同时为分组 Tab 标记跨组未保存草稿提示；桌面端后台顶栏与左侧导航栏固定定位（`sticky` + 独立滚动）、移除侧边栏顶部重复的「工作台 + IP」区并收紧间距与细滚动条，常规桌面屏不再溢出滚动；全后台 6 个列表页的 `ColumnPicker`（「列显示 / 卡片信息」）统一为 40px 按钮样式、底部对齐并改为点击外部/Esc 关闭的浮层面板；日志管理页底部操作行改为 `align-items: flex-end` 对齐每页条数、字段网格放宽至 `260px` 消除 6+1 孤行；用户管理页新增「卡片 / 列表」视图切换与「邀请新用户」快捷入口，修复卡片「更多操作」贴底溢出、无限额卡片进度条基线错位与复选框垂直偏移；设备与会话页批量撤销补齐内联二次确认；账号安全页为绑定密钥、`otpauth` 链接和一次性恢复码补齐 `<CopyValue>`；注册与邀请页切换注册策略改为显式确认、邀请列表补齐一键复制；同步诊断页传输字节改用 `bytes()` 格式化；存储与备份页去除重复的读取时间提示；运行概览副标题并入 `PageHeader` 并规范化告警操作行；用户列表「更多操作」支持点击外部与 `Esc` 关闭、取消展开编辑时的整页单列跳动，并合并 `admin.css` 重复移动端抽屉样式。
+- 验证：全仓 `npm run typecheck` 通过，`npm run build -w @zichan/web` 构建通过，`@zichan/web` Vitest 133 个测试文件 997 项及定向后台/设计契约测试全部通过。
+
+## 2026-11-27 — 前端 UI 审计与一致性修复
+
+- 修复十余处因样式迁移遗漏的基础 `display: grid` 与桌面列定义（预算网格、游戏概览／拆分、设置字段／分类／健康网格、资产转换头部／二级／卖出／步骤网格及同步向导网格）；补齐 `.zc-btn--icon` 与 `.zc-btn--outline` 修饰类，解决移动端日历翻页按钮横向溢出。
+- 补齐 `--shadow-sm` 与 `--warning` 语义引用，清除 `Manage.tsx` 残留的旧版绿色硬编码背景；修正 `admin.css`、日历及选择器中的越阶字号、圆角和暗色失效阴影，合并重复的平板侧栏媒体查询并移除移动底栏 `backdrop-filter` 与过度 `prefers-reduced-motion` 全局过渡屏蔽。
+- 修复触控热区退化（分类排序按钮 `44×44px` 与窄屏换行、附件表单与隐私选项、管理页页签及后台 `DataTable` 复选框）与无障碍缺口（恢复输入框 `:focus-visible` 外框、`AppSecurityGate` 接入 `DialogShell` 焦点锁定、可点击表格行键盘支持、补齐 `aria-expanded`/`aria-pressed` 与 `htmlFor`、`HomeCalendar` 删除改为 `ConfirmDialog`、统一加载占位样式）。
+- 验证：`@zichan/web` Vitest 133 个测试文件 997 项全部通过，全仓 `npm run typecheck` 通过，`impeccable detect` 静态扫描从 14 项降至 1 项（`Sync.tsx` 二维码深色值）。未启动实时浏览器做像素截图对比。
+
 ## 2026-11-27 — 0.7.6 发布准备
 
 - 按用户要求仅做简短本地验证：更新器／更新源 16 项通过；发布脚本 37 项通过、8 项平台或条件用例跳过；服务端及 Web 构建通过，实际签名更新包资源加载、在线及断网 OCR 回归通过。沿用本轮修改已通过的类型检查与 Lint，不重复运行整套本地账本／测试机流程。
@@ -4618,3 +4638,18 @@ tests; sync is v2.
   corrected fee-cost model (plan's £251.98 double-counts a mid-chain fee → correct £251.50; a
   `feeCostMode: 'net' | 'sum-all'` switch keeps the alternate figure available).
 - Verified: 30 tests passing, typecheck clean, build emits `dist`.
+
+## 2026-11-27 周期统计报告（日报 / 周报 / 自然月与发薪月报）与多渠道提醒
+
+- **背景与目标**：支持用户按需开启日报、周报、月报（支持自然月和自定义发薪日周期，如 10 号发薪对应上月 10 日至本月 9 日）以及连续 N 天未记账提醒，支持 HTML 邮件（`multipart/alternative`）以及 Bark / 飞书 / 钉钉 / 企业微信 / Discord / Slack / Webhook 多渠道同步推送。
+- **主要改动**：
+  - `packages/core/src/report-digest.ts`：新增纯函数周期计算（含发薪日跨月/小月月末对齐）、`decimal.js` 精确收支/环比/分类 Top 5/大额支出 Top 3 汇总、多币种分离与连续未记账检测。
+  - `apps/sync-server/src/smtp-client.ts`：扩展 `buildMessage` / `sendEmail` 支持可选 `html` 正文（`multipart/alternative`，UTF-8 Base64 编码）。
+  - `apps/sync-server/src/user-reports.ts`、`store.ts`、`server.ts`：新增用户通知偏好表与发送去重记录表、HTML 邮件卡片模板、多渠道推送发送器（Bark 密钥脱敏存储）、定时调度器（15 分钟扫描，服务端纯内存重放不落盘明文）及 `/api/auth/notifications`、`/api/auth/notifications/test` 接口。
+  - `apps/web/src/ui/AccountNotificationsPanel.tsx`、`screens/Account.tsx`：新增「账号 → 报告与提醒」设置页，提供全部开关、发薪日选择与周期提示、隐私模式、推送渠道管理、即时测试发送与最近发送记录。
+  - `docs/guides/reports-and-notifications.md`、`docs/README.md`：补充使用说明文档。
+- **验证结果**：
+  - `npm run typecheck` 全工作区通过。
+  - `npm test -w @zichan/core -- test/report-digest.test.ts`：6/6 通过。
+  - `npm test -w @zichan/sync-server -- test/user-reports.test.ts test/smtp-client.test.ts test/account-email.test.ts`：14/14 通过。
+  - `npm run build:server`（含 `logger`、`core`、`db`、`sync-server` 打包与 `web` 生产构建）通过。

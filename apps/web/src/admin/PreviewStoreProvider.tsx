@@ -99,7 +99,7 @@ export function PreviewStoreProvider({ backup, preview, onClose, downloadAttachm
 
   if (error) {
     return (
-      <div role="alert" style={{ padding: 24, fontFamily: 'system-ui, sans-serif', color: 'var(--text-primary)' }}>
+      <div role="alert" style={{ padding: 24, color: 'var(--text-primary)' }}>
         <strong>预览数据无法打开</strong>
         <p>{error}</p>
       </div>

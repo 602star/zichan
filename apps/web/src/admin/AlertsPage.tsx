@@ -43,17 +43,6 @@ export function AlertsPage({ client, role, navigate, query }: { client: AdminCli
       </>} />
       {testResult ? <Notice tone={testResult.includes('失败') ? 'bad' : 'info'}>{testResult}</Notice> : null}
       <Loading loading={list.loading} error={list.error} stale={list.stale} loadedAt={list.loadedAt} />
-      <Panel title="通知投递" note="触发与恢复分别持久化，失败最多尝试 5 次，按 1、2、4、8 分钟退避。受理不等于设备已展示。显示最近 100 条，含各渠道汇总结果。">
-        <Loading loading={deliveries.loading} error={deliveries.error} stale={deliveries.stale} loadedAt={deliveries.loadedAt} />
-        <DataTable rows={deliveries.data?.data.deliveries ?? []} rowKey={(item) => item.id} empty="暂无通知投递记录。" columns={[
-          { key: 'at', header: '创建时间', render: (item) => when(item.created_at) },
-          { key: 'event', header: '告警', render: (item) => item.event_key },
-          { key: 'state', header: '状态', render: (item) => ({ pending: '等待发送', retrying: '等待重试', sent: '服务已受理', failed: '发送失败', skipped: '已跳过' })[item.status] ?? item.status },
-          { key: 'attempts', header: '尝试次数', render: (item) => item.attempts },
-          { key: 'error', header: '失败或部分失败说明', render: (item) => item.error_code ?? '—' },
-        ]} />
-      </Panel>
-
       <FilterBar>
         <div className="zc-admin-view-switch" aria-label="告警状态">
           {([['active', '活动'], ['pending', '持续观察'], ['resolved', '已恢复'], ['', '全部']] as const).map(([value, label]) =>
@@ -63,29 +52,37 @@ export function AlertsPage({ client, role, navigate, query }: { client: AdminCli
       </FilterBar>
 
       <Panel title="告警记录">
-        {!alerts.length && !list.loading ? (
-          <Notice>
-            没有符合条件的告警记录。恢复后的告警会一直留在这里；如果从未产生过告警，这里就是空的。
-          </Notice>
-        ) : null}
         <DataTable
           columns={[
             {
-              key: 'state', header: '状态', render: (alert: Alert) => {
+              key: 'state', header: '状态与级别', render: (alert: Alert) => {
                 const label = alertStateLabel(alert);
-                return <Badge tone={label.tone}>{label.text}</Badge>;
+                return (
+                  <div style={row}>
+                    <Badge tone={label.tone}>{label.text}</Badge>
+                    {alert.severity === 'critical' ? <Badge tone="bad">严重</Badge> : <Badge tone="warn">警告</Badge>}
+                  </div>
+                );
               },
             },
-            { key: 'severity', header: '级别', render: (alert: Alert) => alert.severity === 'critical' ? <Badge tone="bad">严重</Badge> : <Badge tone="warn">警告</Badge> },
-            { key: 'rule', header: '规则', render: (alert: Alert) => alert.rule },
-            { key: 'scope', header: '影响范围', secondary: true, render: (alert: Alert) => alert.scope },
+            {
+              key: 'rule', header: '规则与范围', render: (alert: Alert) => (
+                <div>
+                  <div>{alert.rule}</div>
+                  {alert.scope ? <small>{alert.scope}</small> : null}
+                </div>
+              ),
+            },
             { key: 'description', header: '说明', render: (alert: Alert) => describeAlert(alert) },
             { key: 'occurrences', header: '次数', render: (alert: Alert) => String(alert.occurrences) },
-            { key: 'first', header: '首次发生', secondary: true, render: (alert: Alert) => when(alert.firstSeenAt) },
-            { key: 'last', header: '最近发生', render: (alert: Alert) => when(alert.lastSeenAt) },
             {
-              key: 'resolved', header: '恢复时间', secondary: true,
-              render: (alert: Alert) => alert.state === 'resolved' ? when(alert.resolvedAt) : '未恢复',
+              key: 'last', header: '发生与恢复', render: (alert: Alert) => (
+                <div>
+                  <div>最近：{when(alert.lastSeenAt)}</div>
+                  <small>首次：{when(alert.firstSeenAt)}</small>
+                  {alert.state === 'resolved' ? <small>恢复：{when(alert.resolvedAt)}</small> : null}
+                </div>
+              ),
             },
             {
               key: 'ack', header: '知晓记录', secondary: true,
@@ -108,8 +105,19 @@ export function AlertsPage({ client, role, navigate, query }: { client: AdminCli
           ]}
           rows={alerts}
           rowKey={(alert) => alert.key}
-          empty="没有符合条件的告警记录。"
+          empty="没有符合条件的告警记录。恢复后的告警会一直留在这里；如果从未产生过告警，这里就是空的。"
         />
+      </Panel>
+
+      <Panel title="通知投递" note="触发与恢复分别持久化，失败最多尝试 5 次，按 1、2、4、8 分钟退避。受理不等于设备已展示。显示最近 100 条，含各渠道汇总结果。">
+        <Loading loading={deliveries.loading} error={deliveries.error} stale={deliveries.stale} loadedAt={deliveries.loadedAt} />
+        <DataTable rows={deliveries.data?.data.deliveries ?? []} rowKey={(item) => item.id} empty="暂无通知投递记录。" columns={[
+          { key: 'at', header: '创建时间', render: (item) => when(item.created_at) },
+          { key: 'event', header: '告警', render: (item) => item.event_key },
+          { key: 'state', header: '状态', render: (item) => ({ pending: '等待发送', retrying: '等待重试', sent: '服务已受理', failed: '发送失败', skipped: '已跳过' })[item.status] ?? item.status },
+          { key: 'attempts', header: '尝试次数', render: (item) => item.attempts },
+          { key: 'error', header: '失败或部分失败说明', render: (item) => item.error_code ?? '—' },
+        ]} />
       </Panel>
     </>
   );

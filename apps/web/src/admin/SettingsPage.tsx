@@ -74,6 +74,13 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
   const data = payload.data;
   const fields = data.settings.filter((field) => settingGroup(field.name) === group.id);
   const changed = fields.filter((field) => field.editable && draft[field.name] !== undefined && draft[field.name] !== settingEditorValue(field));
+  const changedByGroup = new Map<string, number>();
+  for (const field of data.settings) {
+    if (!field.editable || draft[field.name] === undefined || draft[field.name] === settingEditorValue(field)) continue;
+    const gid = settingGroup(field.name);
+    changedByGroup.set(gid, (changedByGroup.get(gid) ?? 0) + 1);
+  }
+  const otherUnsavedGroups = SETTING_GROUPS.filter((entry) => entry.id !== group.id && (changedByGroup.get(entry.id) ?? 0) > 0);
   const save = async (): Promise<void> => {
     setNotice(''); setError('');
     // Numbers and text fields travel in one payload, each in its own type: coercing a URL
@@ -144,8 +151,18 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
       {role !== 'owner' ? <Notice>只有服务器所有者可以修改设置；这里显示的是当前生效值。</Notice> : null}
 
       <div role="tablist" aria-label="设置分组" style={{ ...row, marginBottom: 16 }}>
-        {SETTING_GROUPS.map((entry) => <Button key={entry.id} {...tabs.tabProps(entry.id)} disabled={saving}>{entry.label}</Button>)}
+        {SETTING_GROUPS.map((entry) => (
+          <Button key={entry.id} {...tabs.tabProps(entry.id)} disabled={saving}>
+            {entry.label}
+            {(changedByGroup.get(entry.id) ?? 0) > 0 ? <span className="zc-admin-tab-dirty" aria-label="有未保存改动" /> : null}
+          </Button>
+        ))}
       </div>
+      {otherUnsavedGroups.length > 0 ? (
+        <Notice tone="warn">
+          其他分组仍有未保存的草稿：{otherUnsavedGroups.map((entry) => `${entry.label}（${changedByGroup.get(entry.id)} 项）`).join('、')}。每组设置需分别点击「保存本组设置」。
+        </Notice>
+      ) : null}
       <div {...tabs.panelProps}>
       <p>{group.description}</p>
       {group.id === 'capacity' ? <div style={{ ...row, marginBottom: 16 }}>
@@ -160,10 +177,39 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
         <Button onClick={() => navigate('/invites')}>管理注册策略与邀请</Button>
       </div> : null}
       {group.id === 'sync-group' ? <ServerGroupPanel client={client} role={role} />
-        : group.id === 'updates' ? <UpdatePanel client={client} role={role} version={data.version.server} /> : <>
+        : group.id === 'updates' ? <UpdatePanel client={client} role={role} version={data.version.server} />
+        : group.id === 'environment' ? (
+          <div className="zc-admin-deployment">
+            <Panel title="版本与安全设置">
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>
+                <Stat label="服务版本" value={data.version.server} hint={`数据 schema ${data.version.schema}`} />
+                <Stat label="访问令牌有效期" value={`${data.security.accessTokenMinutes} 分钟`} />
+                <Stat label="记账会话闲置期" value={`${data.security.sessionDays} 天`} />
+                <Stat label="同步服务" value={data.environment['syncEnabled'] ? '已启用' : '未启用'} />
+                <Stat label="Web 服务" value={data.environment['webEnabled'] ? '已启用' : '未启用'} />
+                <Stat label="强制 HTTPS" value={data.environment['httpsRequired'] ? '是' : '否（显式允许明文 HTTP）'} />
+              </div>
+            </Panel>
+            <Panel title="密钥状态" note="密钥只显示是否已配置，页面不返回密钥本身，也不提供读取用户密钥的入口。">
+              <ul style={{ margin: 0, paddingLeft: 18 }}>
+                {Object.entries(data.secrets).map(([key, value]) => <li key={key}>{key}：{value === 'configured' ? '已配置' : '未配置'}</li>)}
+              </ul>
+            </Panel>
+            <Panel title="运行环境">
+              <ul style={{ margin: 0, paddingLeft: 18 }}>
+                <li>数据目录：<code>{String(data.environment['dataDir'])}</code></li>
+                <li>数据库文件：<code>{String(data.environment['databaseFile'])}</code></li>
+                <li>基础路径：{String(data.environment['basePath'] || '/')}</li>
+                <li>注册策略：{({ invite: '仅邀请', open: '开放注册', closed: '关闭注册' })[String(data.environment['registrationMode'])] ?? String(data.environment['registrationMode'])}</li>
+                <li>账号保护：{data.environment['accountProtection'] === 'managed' ? '云端托管' : String(data.environment['accountProtection'])}</li>
+                <li>托管密钥：{data.environment['custodyEnabled'] ? '启用' : '未启用'}</li>
+              </ul>
+            </Panel>
+          </div>
+        ) : <>
       <Panel title={group.label} note="页面保存值优先；尚未保存时使用部署环境值，最后使用内置默认值。">
         <div className="zc-admin-savebar" style={{ ...row, marginTop: 10 }}>
-          <Button disabled={saving || payload.loading || payload.stale || !changed.length || role !== 'owner'} onClick={() => { void save(); }}>{saving ? '正在保存…' : '保存本组设置'}</Button>
+          <Button variant="primary" disabled={saving || payload.loading || payload.stale || !changed.length || role !== 'owner'} onClick={() => { void save(); }}>{saving ? '正在保存…' : '保存本组设置'}</Button>
           <Button disabled={saving} onClick={() => {
             setDraft((current) => ({ ...current, ...Object.fromEntries(fields.map((field) => [field.name, settingEditorValue(field)])) }));
             setFieldErrors({}); setError(''); setNotice('已放弃本组改动。');
@@ -239,35 +285,6 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
         {notice ? <Notice>{notice}</Notice> : null}
         {error ? <Notice tone="bad">{error}</Notice> : null}
       </Panel>
-
-      <div className="zc-admin-deployment">
-      <Panel title="版本与安全设置">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>
-          <Stat label="服务版本" value={data.version.server} hint={`数据 schema ${data.version.schema}`} />
-          <Stat label="访问令牌有效期" value={`${data.security.accessTokenMinutes} 分钟`} />
-          <Stat label="记账会话闲置期" value={`${data.security.sessionDays} 天`} />
-          <Stat label="同步服务" value={String(data.environment['syncEnabled'])} />
-          <Stat label="Web 服务" value={String(data.environment['webEnabled'])} />
-          <Stat label="强制 HTTPS" value={data.environment['httpsRequired'] ? '是' : '否（显式允许明文 HTTP）'} />
-        </div>
-      </Panel>
-      <Panel title="密钥状态" note="密钥只显示是否已配置，页面不返回密钥本身，也不提供读取用户密钥的入口。">
-        <ul style={{ margin: 0, paddingLeft: 18 }}>
-          {Object.entries(data.secrets).map(([key, value]) => <li key={key}>{key}：{value === 'configured' ? '已配置' : '未配置'}</li>)}
-        </ul>
-      </Panel>
-
-      <Panel title="运行环境">
-        <ul style={{ margin: 0, paddingLeft: 18 }}>
-          <li>数据目录：<code>{String(data.environment['dataDir'])}</code></li>
-          <li>数据库文件：<code>{String(data.environment['databaseFile'])}</code></li>
-          <li>基础路径：{String(data.environment['basePath'] || '/')}</li>
-          <li>注册策略：{String(data.environment['registrationMode'])}</li>
-          <li>账号保护：{String(data.environment['accountProtection'])}</li>
-          <li>托管密钥：{data.environment['custodyEnabled'] ? '启用' : '未启用'}</li>
-        </ul>
-      </Panel>
-      </div>
       </>}
       </div>
     </>

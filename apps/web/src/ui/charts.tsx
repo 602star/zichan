@@ -278,7 +278,7 @@ export function RankBars(props: {
           <span className="zc-rank-track">
             <span className="zc-rank-fill" style={{ height: `${Math.max(6, row.heightRatio * 100)}%`, background: row.color }} />
           </span>
-          <span className="zc-rank-label">{row.label}</span>
+          <span className="zc-rank-label" title={row.label}>{row.label}</span>
           <span className="zc-rank-value">{row.text}</span>
         </button>
       ))}

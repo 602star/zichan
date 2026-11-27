@@ -178,7 +178,7 @@ export function JobsPage({ client, query, navigate, role }: { client: AdminClien
             </Select>
           </Field>
           {jobType === 'blobs.verify' ? (
-            <Field label="限定账号（可选，accountId）"><TextInput value={accountId} onChange={(event) => setAccountId(event.target.value)} placeholder="留空表示全部账号" /></Field>
+            <Field label="限定账号（可选，账号 ID）"><TextInput value={accountId} onChange={(event) => setAccountId(event.target.value)} placeholder="留空表示全部账号" /></Field>
           ) : null}
           {jobType === 'backup.verify' || jobType === 'restore.drill' ? (
             <Field label="备份记录 ID"><TextInput value={recordId} onChange={(event) => setRecordId(event.target.value)} placeholder="backup-..." /></Field>
@@ -186,7 +186,7 @@ export function JobsPage({ client, query, navigate, role }: { client: AdminClien
         </div>
         <p style={muted}>{selected.hint}</p>
         <div style={row}>
-          <Button disabled={!writable || creating} onClick={() => { void submit(); }}>{creating ? '正在创建…' : '创建任务'}</Button>
+          <Button variant="primary" disabled={!writable || creating} onClick={() => { void submit(); }}>{creating ? '正在创建…' : '创建任务'}</Button>
 
 
         </div>

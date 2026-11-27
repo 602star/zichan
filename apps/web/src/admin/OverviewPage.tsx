@@ -58,8 +58,7 @@ export function OverviewPage({ client, navigate, role }: {
 
   return (
     <>
-      <PageHeader title="运行概览" actions={<Button onClick={() => navigate('/startup?range=7d')}>查看账本打开性能</Button>} />
-      <p>服务运行、异常处理与维护操作。</p>
+      <PageHeader title="运行概览" description="服务运行、异常处理与维护操作。" actions={<Button onClick={() => navigate('/startup?range=7d')}>查看账本打开性能</Button>} />
       <nav className="zc-admin-overview-jumps" aria-label="总览分区">
         <a href="#section-待处理事项" onClick={jumpToSection}>处理异常</a>
         <a href="#section-核心指标" onClick={jumpToSection}>请求趋势</a>
@@ -67,7 +66,7 @@ export function OverviewPage({ client, navigate, role }: {
         <a href="#section-维护窗口" onClick={jumpToSection}>维护窗口</a>
         <button type="button" onClick={() => navigate('/monitor')}>运行监控</button>
       </nav>
-      <Loading loading={overview.loading} error={overview.error} stale={overview.stale} loadedAt={overview.loadedAt} />
+      <Loading loading={overview.loading} error={overview.error} stale={overview.stale} />
 
       <div className="zc-admin-dashboard">
       <Panel title="服务状态">
@@ -89,47 +88,51 @@ export function OverviewPage({ client, navigate, role }: {
               const silenced = isSilenced(alert);
               const stateLabel = alertStateLabel(alert);
               return (
-                <li key={alert.key} style={{ marginBottom: 10 }}>
-                  <Badge tone={stateLabel.tone}>{stateLabel.text}</Badge>{' '}
-                  {alert.acknowledgedAt ? <Badge tone="muted">已知晓</Badge> : null}{' '}
-                  {describeAlert(alert)}{' '}
-                  <p style={muted}>范围：{alert.scope}；首次 {when(alert.firstSeenAt)}，最近 {when(alert.lastSeenAt)}，共 {alert.occurrences} 次（连续 {alert.consecutive} 次）</p>{' '}
-                  <NextStep alert={alert} navigate={navigate} />{' '}
-                  <Button disabled={!canWrite(role) || Boolean(alert.acknowledgedAt)} onClick={() => {
-                    void acknowledgeAlert(client, alert).catch((error) => setActionError(message(error))).finally(overview.reload);
-                  }}>
-                    {alert.acknowledgedAt ? `已由 ${alert.acknowledgedBy ?? ''} 知晓` : '标记已知晓'}
-                  </Button>{' '}
-                  {silenced ? (
-                    <span style={muted}>
-                      已暂停通知至 {when(alert.silencedUntil ?? '')}{alert.silenceReason ? `（${alert.silenceReason}）` : ''}{' '}
-                      <Button disabled={!canWrite(role)} onClick={() => {
-                        void unsilenceAlert(client, alert).catch((error) => setActionError(message(error))).finally(overview.reload);
-                      }}>恢复通知</Button>
-                    </span>
-                  ) : silenceDraft?.key === alert.key ? (
-                    <span style={row}>
-                      <Select
-                        value={String(silenceDraft.hours)}
-                        onChange={(event) => setSilenceDraft({ ...silenceDraft, hours: Number(event.target.value) })}
-                      >
-                        {SILENCE_HOURS.map((hours) => <option key={hours} value={hours}>{hours >= 24 ? `${hours / 24} 天` : `${hours} 小时`}</option>)}
-                      </Select>
-                      <TextInput placeholder="暂停通知原因（必填，写入审计）" value={silenceDraft.reason}
-                        onChange={(event) => setSilenceDraft({ ...silenceDraft, reason: event.target.value })} />
-                      <Button disabled={!silenceDraft.reason.trim()} onClick={() => {
-                        void silenceAlert(client, alert, silenceDraft)
-                          .then(() => setSilenceDraft(undefined))
-                          .catch((error) => setActionError(message(error)))
-                          .finally(overview.reload);
-                      }}>暂停通知</Button>
-                      <Button onClick={() => setSilenceDraft(undefined)}>取消</Button>
-                    </span>
-                  ) : (
-                    <Button disabled={!canWrite(role)} onClick={() => setSilenceDraft({ key: alert.key, hours: 24, reason: '' })}>暂停通知…</Button>
-                  )}
+                <li key={alert.key}>
+                  <div className="zc-admin-issue-head">
+                    <Badge tone={stateLabel.tone}>{stateLabel.text}</Badge>
+                    {alert.acknowledgedAt ? <Badge tone="muted">已知晓</Badge> : null}
+                    <span>{describeAlert(alert)}</span>
+                  </div>
+                  <p style={muted}>范围：{alert.scope}；首次 {when(alert.firstSeenAt)}，最近 {when(alert.lastSeenAt)}，共 {alert.occurrences} 次（连续 {alert.consecutive} 次）</p>
+                  <div className="zc-admin-issue-actions">
+                    <NextStep alert={alert} navigate={navigate} />
+                    <Button disabled={!canWrite(role) || Boolean(alert.acknowledgedAt)} onClick={() => {
+                      void acknowledgeAlert(client, alert).catch((error) => setActionError(message(error))).finally(overview.reload);
+                    }}>
+                      {alert.acknowledgedAt ? `已由 ${alert.acknowledgedBy ?? ''} 知晓` : '标记已知晓'}
+                    </Button>
+                    {silenced ? (
+                      <span style={{ ...muted, ...row }}>
+                        已暂停通知至 {when(alert.silencedUntil ?? '')}{alert.silenceReason ? `（${alert.silenceReason}）` : ''}
+                        <Button disabled={!canWrite(role)} onClick={() => {
+                          void unsilenceAlert(client, alert).catch((error) => setActionError(message(error))).finally(overview.reload);
+                        }}>恢复通知</Button>
+                      </span>
+                    ) : silenceDraft?.key === alert.key ? (
+                      <span style={row}>
+                        <Select
+                          value={String(silenceDraft.hours)}
+                          onChange={(event) => setSilenceDraft({ ...silenceDraft, hours: Number(event.target.value) })}
+                        >
+                          {SILENCE_HOURS.map((hours) => <option key={hours} value={hours}>{hours >= 24 ? `${hours / 24} 天` : `${hours} 小时`}</option>)}
+                        </Select>
+                        <TextInput placeholder="暂停通知原因（必填，写入审计）" value={silenceDraft.reason}
+                          onChange={(event) => setSilenceDraft({ ...silenceDraft, reason: event.target.value })} />
+                        <Button variant="primary" disabled={!silenceDraft.reason.trim()} onClick={() => {
+                          void silenceAlert(client, alert, silenceDraft)
+                            .then(() => setSilenceDraft(undefined))
+                            .catch((error) => setActionError(message(error)))
+                            .finally(overview.reload);
+                        }}>暂停通知</Button>
+                        <Button onClick={() => setSilenceDraft(undefined)}>取消</Button>
+                      </span>
+                    ) : (
+                      <Button disabled={!canWrite(role)} onClick={() => setSilenceDraft({ key: alert.key, hours: 24, reason: '' })}>暂停通知…</Button>
+                    )}
+                  </div>
                   {alert.notifyState ? (
-                    <div style={muted}>
+                    <div style={{ ...muted, marginTop: 6 }}>
                       外部通知：{alert.notifyState === 'sent' ? '已发送' : alert.notifyState === 'skipped' ? '已跳过' : '发送失败'}
                       {alert.lastNotifiedAt ? ` · ${when(alert.lastNotifiedAt)}` : ''}{alert.notifyError ? ` · ${alert.notifyError}` : ''}
                     </div>

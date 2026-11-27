@@ -235,3 +235,4 @@ export * from './fixed-lifecycle.js';
 export * from './calendar.js';
 export * from './calendar-preferences.js';
 export * from './calendar-ics.js';
+export * from './report-digest.js';

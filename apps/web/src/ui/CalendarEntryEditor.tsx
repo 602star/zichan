@@ -3,6 +3,7 @@ import { CALENDAR_KIND_LABELS, CALENDAR_REPEAT_LABELS, calendarDayInfo, lunarCal
 import { saveCalendarEntry } from '@zichan/db';
 import { useStore } from '../db/store.js';
 import { CalendarDatePicker } from './CalendarDatePicker.js';
+import { ConfirmDialog } from './ConfirmDialog.js';
 import { DateTimeInput } from './DateTimeInput.js';
 import { DialogShell } from './DialogShell.js';
 
@@ -20,11 +21,16 @@ export function CalendarEntryEditor({ initial, replaceOccurrence, onClose, onSav
   const [matches, setMatches] = useState<{ id: string; label: string }[]>([]);
   const [searchError, setSearchError] = useState('');
   const [linkedLabels, setLinkedLabels] = useState<Record<string, string>>({});
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
   const linkedKey = (entry.transactionIds ?? []).join('\0');
   const id = useId();
   const dirty = JSON.stringify(entry) !== JSON.stringify(initial);
   const patch = (value: Partial<CalendarEntry>) => setEntry(current => ({ ...current, ...value }));
-  const close = () => { if (!busy && (!dirty || window.confirm('尚有未保存的日历内容，确定放弃修改？'))) onClose(); };
+  const close = () => {
+    if (busy) return;
+    if (dirty) { setConfirmDiscard(true); return; }
+    onClose();
+  };
 
   useEffect(() => {
     if (!query.trim()) { setMatches([]); return; }
@@ -105,5 +111,17 @@ export function CalendarEntryEditor({ initial, replaceOccurrence, onClose, onSav
         {matches.filter(t => !entry.transactionIds?.includes(t.id)).map(t => <button type="button" key={t.id} className="zc-calendar-search-result" onClick={() => patch({ transactionIds: [...(entry.transactionIds ?? []), t.id] })}>{t.label}</button>)}
       </details>
     </form>
+    {confirmDiscard && (
+      <ConfirmDialog
+        title="放弃未保存的日历内容？"
+        confirmLabel="放弃修改"
+        cancelLabel="继续编辑"
+        tone="danger"
+        onCancel={() => setConfirmDiscard(false)}
+        onConfirm={() => { setConfirmDiscard(false); onClose(); }}
+      >
+        <p style={{ margin: 0 }}>尚有未保存的日历内容，确定放弃修改吗？</p>
+      </ConfirmDialog>
+    )}
   </DialogShell>;
 }

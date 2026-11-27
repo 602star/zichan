@@ -38,6 +38,7 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
   const [days, setDays] = useState('7');
   const range = query.get('growth') ?? '90d';
   const [issued, setIssued] = useState<Invite>();
+  const [pendingMode, setPendingMode] = useState<string | null>(null);
   const [error, setError] = useState('');
   const actionError = useActionError();
 
@@ -59,10 +60,11 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
     (next) => update({ sort: next.sort, dir: next.dir }),
   );
 
+  const modeLabel = (value: string) => ({ invite: '仅邀请', open: '开放注册', closed: '关闭注册' })[value] ?? value;
   const setMode = (value: string): void => {
     actionError.clear();
     void client.request('/registration', { mode: value }, { idempotencyKey: adminIdempotencyKey(`registration-${value}`) })
-      .then(() => mode.reload())
+      .then(() => { setPendingMode(null); mode.reload(); })
       .catch((caught) => actionError.setError(message(caught)));
   };
 
@@ -82,14 +84,28 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
         <Loading loading={mode.loading} error={mode.error} />
         <div style={{ ...row, alignItems: 'flex-end' }}>
           <Field label="当前策略">
-            <Select disabled={role !== 'owner' || !writable || !!mode.data?.sourceNodeId} value={mode.data?.mode ?? ''} onChange={(event) => setMode(event.target.value)}>
+            <Select disabled={role !== 'owner' || !writable || !!mode.data?.sourceNodeId} value={pendingMode ?? mode.data?.mode ?? ''} onChange={(event) => {
+              const next = event.target.value;
+              setPendingMode(next === mode.data?.mode ? null : next);
+            }}>
               <option value="invite">仅邀请</option>
               <option value="open">开放注册</option>
               <option value="closed">关闭注册</option>
             </Select>
           </Field>
-          <span style={muted}>生效值直接来自服务器；保存前不会回显未确认的改动。</span>
+          <span style={muted}>生效值直接来自服务器；切换后需确认保存才生效。</span>
         </div>
+        {pendingMode ? (
+          <Notice tone="warn">
+            <div style={{ display: 'grid', gap: 8 }}>
+              <span>即将把注册策略从「{modeLabel(mode.data?.mode ?? '')}」切换为「{modeLabel(pendingMode)}」。</span>
+              <div style={row}>
+                <Button variant="primary" onClick={() => setMode(pendingMode)}>确认切换</Button>
+                <Button onClick={() => setPendingMode(null)}>取消</Button>
+              </div>
+            </div>
+          </Notice>
+        ) : null}
         {mode.data?.mode === 'closed' ? <Notice tone="warn">当前已关闭注册：即使持有邀请码也无法注册。</Notice> : null}
         {mode.data?.sourceNodeId ? <Notice tone="warn">注册策略和邀请码由同步组主节点统一管理。请在主节点创建邀请码；组内任一网页注册都使用同一个码，核销一次。</Notice> : null}
       </Panel>
@@ -97,7 +113,7 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
       <Panel title="生成邀请码">
         <div style={{ ...row, alignItems: 'flex-end' }}>
           <Field label="有效期（1–30 天）"><TextInput value={days} inputMode="numeric" onChange={(event) => setDays(event.target.value)} style={{ width: 90 }} /></Field>
-          <Button disabled={!!mode.data?.sourceNodeId || !writable} onClick={() => {
+          <Button variant="primary" disabled={!!mode.data?.sourceNodeId || !writable} onClick={() => {
             setError('');
             void client.request<{ invite: Invite }>('/invites', { days: Number(days) }, { idempotencyKey: adminIdempotencyKey('invite-create') })
               .then((result) => { setIssued(result.invite); invites.reload(); })
@@ -131,7 +147,7 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
         <Loading loading={invites.loading} error={invites.error} stale={invites.stale} loadedAt={invites.loadedAt} />
         <DataTable
           columns={[
-            { key: 'code', header: '邀请码', render: (invite) => <code style={{ fontSize: 'var(--fs-sm)' }}>{invite.code}</code> },
+            { key: 'code', header: '邀请码', render: (invite) => <span style={row}><code style={{ fontSize: 'var(--fs-sm)' }}>{invite.code}</code>{!invite.usedBy && !invite.disabled ? <CopyValue value={invite.code} /> : null}</span> },
             { key: 'state', header: '状态', ...sortHeader('state', '状态'), render: (invite) => { const value = stateOf(invite); return <Badge tone={value.tone}>{value.label}</Badge>; } },
             { key: 'created', header: '创建时间', secondary: true, optional: true, ...sortHeader('created', '创建时间'), render: (invite) => when(invite.createdAt) },
             { key: 'expires', header: '有效期至', ...sortHeader('expires', '有效期至'), render: (invite) => when(invite.expiresAt) },
@@ -139,6 +155,7 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
             {
               key: 'actions', header: '操作', render: (invite) => (
                 <Button
+                  variant={invite.disabled ? 'default' : 'danger'}
                   disabled={Boolean(invite.usedBy) || Boolean(mode.data?.sourceNodeId)}
                   onClick={() => {
                     void client.request(`/invites/${encodeURIComponent(invite.code)}/disable`, { disabled: !invite.disabled }, { idempotencyKey: adminIdempotencyKey(`invite-${invite.code}-${invite.disabled ? 'enable' : 'disable'}`) })

@@ -51,6 +51,7 @@ export function SessionsPage({ client, query, navigate, role, selfAccountId }: {
   useEffect(() => { setSearchDraft(search); }, [search]);
   const [report, setReport] = useState('');
   const [busy, setBusy] = useState(false);
+  const [confirmRevokeAll, setConfirmRevokeAll] = useState(false);
   const actionError = useActionError();
 
   const list = useResource(() => client.request<{ sessions: SessionRow[]; nextCursor?: string; paginationUnit: string; note: string; sort?: { key: string; direction: string } }>(
@@ -113,11 +114,23 @@ export function SessionsPage({ client, query, navigate, role, selfAccountId }: {
 
   return (
     <>
-      <PageHeader title="设备与会话" description="查看登录设备，按账号和状态筛选并撤销会话。" actions={<><Button disabled={busy || revocableCount === 0} onClick={() => { void revokeMany(); }}>撤销当前页可撤销的会话</Button><Button onClick={list.reload}>刷新</Button></>} />
+      <PageHeader title="设备与会话" description="查看登录设备，按账号和状态筛选并撤销会话。" actions={<><Button variant="danger" disabled={busy || revocableCount === 0} onClick={() => setConfirmRevokeAll(true)}>撤销当前页可撤销的会话</Button><Button onClick={list.reload}>刷新</Button></>} />
+      {confirmRevokeAll ? (
+        <Notice tone="warn">
+          <div style={{ display: 'grid', gap: 8 }}>
+            <strong>确认撤销当前页 {revocableCount} 个可管理会话？</strong>
+            <span>目标设备将立即下线并需重新登录；当前管理会话与受保护账号会话不受影响。</span>
+            <div style={row}>
+              <Button variant="danger" disabled={busy} onClick={() => { setConfirmRevokeAll(false); void revokeMany(); }}>{busy ? '正在撤销…' : `确认撤销 ${revocableCount} 个会话`}</Button>
+              <Button disabled={busy} onClick={() => setConfirmRevokeAll(false)}>取消</Button>
+            </div>
+          </div>
+        </Notice>
+      ) : null}
       <FilterBar note="按会话分页：每页会话数固定，不再按账号展开。">
         <AccountFilter client={client} accountId={accountId} username={query.get('username') ?? ''} onApply={update} />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
-          <Field label="用户名、accountId 或设备名">
+          <Field label="用户名、账号 ID 或设备名">
             <TextInput value={searchDraft} maxLength={128} onChange={(event) => setSearchDraft(event.target.value)}
               onKeyDown={(event) => { if (event.key === 'Enter') update({ search: searchDraft }); }} />
           </Field>
@@ -133,7 +146,7 @@ export function SessionsPage({ client, query, navigate, role, selfAccountId }: {
           </Field>
         </div>
         <div style={{ ...row, marginTop: 10 }}>
-          <Button onClick={() => update({ search: searchDraft })}>搜索</Button>
+          <Button variant="primary" onClick={() => update({ search: searchDraft })}>搜索</Button>
           <Button onClick={() => { setSearchDraft(''); update({ search: undefined, accountId: undefined, username: undefined, state: undefined, kind: undefined }); }}>清除筛选</Button>
 
         </div>

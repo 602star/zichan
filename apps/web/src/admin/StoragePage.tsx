@@ -91,7 +91,7 @@ export function StoragePage({ client, role, query, navigate, onJob }: {
 
       <div className="zc-admin-storage-workspace">
       <Panel title="备份执行状态" note="计划配置、执行记录、校验结果分别判断。登记过一次成功备份，不代表自动执行程序当前仍在运行。">
-        <Loading loading={backups.loading} error={backups.error} stale={backups.stale} loadedAt={backups.loadedAt} />
+        <Loading loading={backups.loading} error={backups.error} stale={backups.stale} />
         <div className="zc-admin-grid">
           <Stat label="最近执行" value={!summary ? '状态未知' : !summary.lastAttempt ? '尚无执行记录' : summary.lastAttempt.status === 'failed' || summary.lastAttempt.verificationOk === false ? '失败或校验未通过' : '已完成'}
             tone={summary?.lastAttempt?.status === 'failed' || summary?.lastAttempt?.verificationOk === false ? 'bad' : undefined}
@@ -112,7 +112,7 @@ export function StoragePage({ client, role, query, navigate, onJob }: {
       </Panel>
 
       <Panel title="备份记录" action={<Button onClick={backups.reload}>刷新</Button>} note={backups.data?.note}>
-        <Loading loading={backups.loading} error={backups.error} stale={backups.stale} loadedAt={backups.loadedAt} />
+        <Loading loading={backups.loading} error={backups.error} stale={backups.stale} />
         <Notice tone="warn">
           备份与恢复必须在服务停止时执行，由部署侧维护程序完成（停止服务 → 备份 → 校验 → 恢复启动）。
           后台不直接调用这类流程，也不提供在浏览器里下载整套服务器备份。

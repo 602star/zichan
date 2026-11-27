@@ -27,6 +27,8 @@ import { isInitializationResetRequiredError } from './initialization-error.js';
 import { initializedLedgerSetting } from './ledger-initialization.js';
 import { exportPortableLedger } from './portable-backup.js';
 import { FirstRunWizard } from '../ui/FirstRunWizard.js';
+import { BrandMark } from '../ui/BrandMark.js';
+import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { FirstUseModeGate, BrowserStorageConsent } from '../ui/FirstUseModeGate.js';
 import { FirstServerConnectionGate } from '../ui/FirstServerConnectionGate.js';
 import { FirstRemoteLedgerRestoreGate } from '../ui/FirstRemoteLedgerRestoreGate.js';
@@ -235,7 +237,7 @@ function Splash({ label }: { label: string }) {
   return (
     <div style={{
       minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: 'var(--bg)', color: 'var(--text-secondary)', fontFamily: 'system-ui, sans-serif', fontSize: 'var(--fs-body)',
+      background: 'var(--bg)', color: 'var(--text-secondary)', fontSize: 'var(--fs-body)',
     }}>
       {label}
     </div>
@@ -251,12 +253,13 @@ function DeviceStorageGate(props: {
 }) {
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
+  const [confirmReset, setConfirmReset] = useState(false);
   const creating = !props.state.initialized;
   const canSubmit = password.length >= 8 && (!creating || password === confirmation);
   return (
     <div style={{
       minHeight: '100dvh', display: 'grid', placeItems: 'center', padding: 24,
-      background: 'var(--bg)', color: 'var(--text-primary)', fontFamily: 'system-ui, sans-serif',
+      background: 'var(--bg)', color: 'var(--text-primary)',
     }}>
       <form
         onSubmit={(event) => {
@@ -265,6 +268,7 @@ function DeviceStorageGate(props: {
         }}
         style={{ width: 'min(420px, 100%)', border: '1px solid var(--border)', background: 'var(--surface)', padding: 24, boxShadow: 'var(--shadow-lg)' }}
       >
+        <div className="zc-auth-brand" style={{ marginTop: 0, marginBottom: 10 }}><BrandMark /><span>有本</span></div>
         <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>{creating ? '保护本机账本' : '解锁本机账本'}</div>
         <div style={{ marginTop: 7, color: 'var(--text-secondary)', fontSize: 'var(--fs-body)', lineHeight: 1.55 }}>{props.state.message}</div>
         <div style={{ marginTop: 5, color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)', lineHeight: 1.5 }}>
@@ -308,11 +312,22 @@ function DeviceStorageGate(props: {
           <button
             type="button"
             disabled={props.busy}
-            onClick={() => void props.onReset()}
+            onClick={() => setConfirmReset(true)}
             style={{ width: '100%', marginTop: 12, border: 0, background: 'transparent', color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', cursor: props.busy ? 'not-allowed' : 'pointer' }}
           >
             忘记密码并重置本机开发数据
           </button>
+        )}
+        {confirmReset && (
+          <ConfirmDialog
+            title="重置本机开发数据？"
+            confirmLabel="确认重置"
+            tone="danger"
+            onCancel={() => setConfirmReset(false)}
+            onConfirm={async () => { setConfirmReset(false); await props.onReset(); }}
+          >
+            <p style={{ margin: 0 }}>将删除本机开发账本、附件、表单草稿和浏览器内备份。此操作不可撤销；只有浏览器外的 .zcbak 或服务器副本可用于恢复。</p>
+          </ConfirmDialog>
         )}
       </form>
     </div>
@@ -358,7 +373,7 @@ function BrowserStorageRecoveryGate(props: {
   }
 
   return (
-    <main style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(24px, 6vw, 64px)', boxSizing: 'border-box', background: 'var(--bg)', color: 'var(--text-primary)', fontFamily: 'system-ui, sans-serif' }}>
+    <main style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(24px, 6vw, 64px)', boxSizing: 'border-box', background: 'var(--bg)', color: 'var(--text-primary)' }}>
       <section style={{ width: 'min(760px, 100%)', margin: '6vh auto 0', padding: 'clamp(20px, 5vw, 34px)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', background: 'var(--surface)' }}>
         <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', letterSpacing: '.1em' }}>只读恢复模式</div>
         <h1 style={{ margin: '9px 0 8px', color: 'var(--text-primary)', fontSize: 'var(--fs-display)' }}>浏览器不再保证本地数据持久保存</h1>
@@ -404,6 +419,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<{ message: string; resetRequired: boolean } | null>(null);
   const [errorCopyStatus, setErrorCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [resetting, setResetting] = useState(false);
+  const [confirmErrorReset, setConfirmErrorReset] = useState(false);
   const [storageBackend, setStorageBackend] = useState<StorageBackend>('browser-indexeddb');
   const [dataLocation, setDataLocation] = useState('');
   const [storageProtection, setStorageProtection] = useState<DeviceStorageState | null>(null);
@@ -937,7 +953,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         busy={unlockBusy || resetting}
         error={unlockError}
         onUnlock={unlockStorage}
-        onReset={resetDevelopmentData}
+        onReset={() => resetDevelopmentData(false)}
       />
       </>
     );
@@ -953,7 +969,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
     };
     return (
-      <div style={{ minHeight: '100dvh', padding: 40, fontFamily: 'system-ui, sans-serif', background: 'var(--bg)', color: 'var(--text-primary)' }}>
+      <div style={{ minHeight: '100dvh', padding: 40, background: 'var(--bg)', color: 'var(--text-primary)' }}>
         <div style={{ maxWidth: 720, margin: '10vh auto 0' }}>
           <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>数据库初始化失败</div>
           <label style={{ display: 'block', marginTop: 12, fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>
@@ -977,7 +993,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               <button
                 type="button"
                 disabled={resetting}
-                onClick={() => void resetDevelopmentData()}
+                onClick={() => setConfirmErrorReset(true)}
                 style={{ minHeight: 44, padding: '0 16px', border: 0, borderRadius: 'var(--r-sm)', background: 'var(--negative)', color: 'var(--on-accent)', fontWeight: 'var(--fw-bold)' }}
               >
                 {resetting ? '正在重置…' : '重置本机开发数据'}
@@ -1014,6 +1030,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 ? '诊断信息已复制。'
                 : '自动复制失败。点击错误详情后按 Ctrl+A、Ctrl+C 可手动复制。'}
             </div>
+          )}
+          {confirmErrorReset && (
+            <ConfirmDialog
+              title="重置本机开发数据？"
+              confirmLabel="确认重置"
+              tone="danger"
+              onCancel={() => setConfirmErrorReset(false)}
+              onConfirm={async () => { setConfirmErrorReset(false); await resetDevelopmentData(false); }}
+            >
+              <p style={{ margin: 0 }}>将删除本机开发账本、附件、表单草稿和浏览器内备份。此操作不可撤销；只有浏览器外的 .zcbak 或服务器副本可用于恢复。</p>
+            </ConfirmDialog>
           )}
         </div>
       </div>
@@ -1079,7 +1106,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         <div
           role="status"
           aria-label="当前是演示账本"
-          style={{ position: 'fixed', top: 8, left: '50%', zIndex: 10000, transform: 'translateX(-50%)', border: '1px solid var(--warning)', borderRadius: 'var(--r-pill)', padding: '4px 10px', background: 'var(--warn-surface)', color: 'var(--warning)', boxShadow: 'var(--shadow-md)', fontFamily: 'system-ui, sans-serif', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', pointerEvents: 'none' }}
+          style={{ position: 'fixed', top: 8, left: '50%', zIndex: 10000, transform: 'translateX(-50%)', border: '1px solid var(--warning)', borderRadius: 'var(--r-pill)', padding: '4px 10px', background: 'var(--warn-surface)', color: 'var(--warning)', boxShadow: 'var(--shadow-md)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', pointerEvents: 'none' }}
         >
           演示账本
         </div>

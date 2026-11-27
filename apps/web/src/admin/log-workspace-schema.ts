@@ -8,7 +8,7 @@ const resultOptions: [string, string][] = [['success', '成功'], ['failure', '�
 const taskOptions: [string, string][] = [['queued', '排队中'], ['running', '执行中'], ['succeeded', '已完成'], ['failed', '失败'], ['cancelled', '已取消'], ['interrupted', '已中断']];
 const at: LogField = { key: 'at', label: '时间', kind: 'time', column: true };
 const ip: LogField = { key: 'ip', label: '来源 IP', column: true, filter: true };
-const request: LogField = { key: 'requestId', label: 'Request ID', column: true, filter: true, placeholder: 'req-…' };
+const request: LogField = { key: 'requestId', label: '请求 ID', column: true, filter: true, placeholder: 'req-…' };
 const instance: LogField = { key: 'instanceId', label: '实例', filter: true };
 
 /** One catalogue owns list columns, filters, detail labels and per-category semantics. */

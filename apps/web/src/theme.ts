@@ -25,6 +25,7 @@ export const CATEGORY_COLORS = ['var(--cat-1)', 'var(--cat-2)', 'var(--cat-3)', 
  */
 const SHADOWS: Record<ThemeMode, Record<string, string>> = {
   light: {
+    '--shadow-sm': '0 4px 14px rgba(46, 36, 27, .10)',
     '--shadow-md': '0 18px 40px rgba(46, 36, 27, .16)',
     '--shadow-lg': '0 24px 80px rgba(46, 36, 27, .12)',
     '--shadow-up': '0 -10px 30px rgba(15, 23, 42, .08)',
@@ -32,6 +33,7 @@ const SHADOWS: Record<ThemeMode, Record<string, string>> = {
     '--scrim': 'rgba(20, 16, 12, 0.38)',
   },
   dark: {
+    '--shadow-sm': '0 4px 14px rgba(0, 0, 0, .42)',
     '--shadow-md': '0 18px 40px rgba(0, 0, 0, .55)',
     '--shadow-lg': '0 24px 80px rgba(0, 0, 0, .6)',
     '--shadow-up': '0 -10px 30px rgba(0, 0, 0, .5)',

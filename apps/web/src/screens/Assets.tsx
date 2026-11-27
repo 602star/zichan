@@ -48,7 +48,7 @@ export function Assets() {
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [store, rev]);
-  if (!snap || !conversion) return <p role="status">正在读取资产…</p>;
+  if (!snap || !conversion) return <p role="status" className="zc-loading-state">正在读取资产…</p>;
   const base = baseAsset(snap);
   const reportValue = (value: string) => `${num(value, base?.decimals ?? 2)} ${base?.code ?? ''}`.trim();
   const positions = conversion.groups.filter((group) => group.hasPosition && snap.assets.find((asset) => asset.id === group.assetId)?.type !== 'fiat');

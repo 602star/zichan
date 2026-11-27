@@ -90,6 +90,7 @@ export function buildMessage(input: {
   to: string[];
   subject: string;
   body: string;
+  html?: string;
   messageId: string;
   date: string;
 }): string {
@@ -101,14 +102,37 @@ export function buildMessage(input: {
   const subject = input.subject.replace(/[\r\n]+/g, ' ').slice(0, 200);
   // Base64 keeps a Chinese subject intact without needing an encoded-word splitter.
   const encodedSubject = `=?UTF-8?B?${Buffer.from(subject, 'utf8').toString('base64')}?=`;
-  const body = input.body.replace(/\r?\n/g, '\r\n').replace(/^\./gm, '..');
-  return [
+  const commonHeaders = [
     header('From', formatAddress(input.from, input.fromName)),
     header('To', recipients.join(', ')),
     header('Subject', encodedSubject),
     header('Date', input.date),
     header('Message-ID', input.messageId),
     'MIME-Version: 1.0',
+  ];
+  if (input.html) {
+    const boundary = `zichan-${randomBytes(12).toString('hex')}`;
+    const wrapBase64 = (value: string): string => Buffer.from(value, 'utf8').toString('base64').replace(/.{1,76}/g, '$&\r\n').replace(/\r\n$/, '');
+    return [
+      ...commonHeaders,
+      `Content-Type: multipart/alternative; boundary="${boundary}"`,
+      '',
+      `--${boundary}`,
+      'Content-Type: text/plain; charset=utf-8',
+      'Content-Transfer-Encoding: base64',
+      '',
+      wrapBase64(input.body),
+      `--${boundary}`,
+      'Content-Type: text/html; charset=utf-8',
+      'Content-Transfer-Encoding: base64',
+      '',
+      wrapBase64(input.html),
+      `--${boundary}--`,
+    ].join('\r\n');
+  }
+  const body = input.body.replace(/\r?\n/g, '\r\n').replace(/^\./gm, '..');
+  return [
+    ...commonHeaders,
     'Content-Type: text/plain; charset=utf-8',
     'Content-Transfer-Encoding: 8bit',
     '',
@@ -143,8 +167,12 @@ function upgradeToTls(socket: Socket, channel: EmailChannel, timeoutMs: number):
   });
 }
 
-/** Sends one plain-text message through a configured SMTP transport. */
-export async function sendEmail(channel: EmailChannel, message: { to: string[]; subject: string; body: string }, options: SmtpOptions = {}): Promise<void> {
+/** Sends one plain-text or multipart HTML message through a configured SMTP transport. */
+export async function sendEmail(
+  channel: EmailChannel,
+  message: { to: string[]; subject: string; body: string; html?: string },
+  options: SmtpOptions = {},
+): Promise<void> {
   const timeoutMs = options.timeoutMs ?? 15_000;
   const payload = buildMessage({
     from: channel.from,
@@ -152,6 +180,7 @@ export async function sendEmail(channel: EmailChannel, message: { to: string[]; 
     to: message.to,
     subject: message.subject,
     body: message.body,
+    ...(message.html ? { html: message.html } : {}),
     messageId: `<${randomBytes(12).toString('hex')}@zichan>`,
     date: new Date().toUTCString(),
   });

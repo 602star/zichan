@@ -1462,6 +1462,23 @@ CREATE TABLE IF NOT EXISTS account_email_outbox (
   sent_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_account_email_outbox_due ON account_email_outbox (state, next_attempt_at);
+CREATE TABLE IF NOT EXISTS account_notification_settings (
+  username TEXT PRIMARY KEY COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
+  config_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS account_notification_deliveries (
+  id TEXT PRIMARY KEY,
+  event_key TEXT NOT NULL UNIQUE,
+  username TEXT NOT NULL COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  period_key TEXT NOT NULL,
+  status TEXT NOT NULL,
+  channels_json TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_account_notification_deliveries_user ON account_notification_deliveries (username, created_at DESC);
 CREATE TABLE IF NOT EXISTS ledger_backup_archives (
   username TEXT NOT NULL COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
   replica_id TEXT NOT NULL REFERENCES ledger_replica_slots(replica_id) ON DELETE CASCADE,
@@ -2310,6 +2327,121 @@ END;`);
       await driver.run("UPDATE account_email_outbox SET state = 'skipped' WHERE username = ? AND state = 'pending'", [username]);
       await driver.run('DELETE FROM account_password_email_codes WHERE account_id = (SELECT account_id FROM sync_account_identities WHERE username = ?)', [username]);
     });
+  }
+
+  async getNotificationSettings(username: string): Promise<string | undefined> {
+    await this.ready;
+    const row = await this.driver.get<{ config_json: string }>(
+      'SELECT config_json FROM account_notification_settings WHERE username = ?',
+      [username],
+    );
+    return row?.config_json;
+  }
+
+  async saveNotificationSettings(username: string, configJson: string): Promise<void> {
+    await this.ready;
+    const at = nowIso();
+    await this.driver.run(
+      `INSERT INTO account_notification_settings (username, config_json, updated_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(username) DO UPDATE SET config_json = excluded.config_json, updated_at = excluded.updated_at`,
+      [username, configJson, at],
+    );
+  }
+
+  async listNotificationSettings(): Promise<Array<{ username: string; configJson: string }>> {
+    await this.ready;
+    const rows = await this.driver.all<Record<string, unknown>>(
+      `SELECT n.username, n.config_json
+       FROM account_notification_settings n
+       JOIN sync_users u ON u.username = n.username
+       WHERE u.disabled = 0`,
+    );
+    return rows.map((row) => ({
+      username: String(row['username']),
+      configJson: String(row['config_json']),
+    }));
+  }
+
+  async hasNotificationDelivery(eventKey: string): Promise<boolean> {
+    await this.ready;
+    const row = await this.driver.get<{ found: number }>(
+      'SELECT 1 AS found FROM account_notification_deliveries WHERE event_key = ?',
+      [eventKey],
+    );
+    return Boolean(row?.found);
+  }
+
+  async lastInactivityDeliveryDay(username: string): Promise<string | undefined> {
+    await this.ready;
+    const row = await this.driver.get<{ period_key: string }>(
+      `SELECT period_key FROM account_notification_deliveries
+       WHERE username = ? AND kind = 'inactivity' AND status IN ('sent', 'partial')
+       ORDER BY created_at DESC LIMIT 1`,
+      [username],
+    );
+    if (!row?.period_key) return undefined;
+    const match = /^inactivity:(\d{4}-\d{2}-\d{2})$/.exec(row.period_key);
+    return match?.[1];
+  }
+
+  async recordNotificationDelivery(input: {
+    eventKey: string;
+    username: string;
+    kind: string;
+    periodKey: string;
+    status: string;
+    channelsJson: string;
+    summary: string;
+  }): Promise<void> {
+    await this.ready;
+    await this.driver.run(
+      `INSERT OR IGNORE INTO account_notification_deliveries
+        (id, event_key, username, kind, period_key, status, channels_json, summary, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        `notif-${randomBytes(12).toString('hex')}`,
+        input.eventKey,
+        input.username,
+        input.kind,
+        input.periodKey,
+        input.status,
+        input.channelsJson,
+        input.summary,
+        nowIso(),
+      ],
+    );
+  }
+
+  async listNotificationDeliveries(username: string, limit = 15): Promise<Array<{
+    id: string;
+    eventKey: string;
+    kind: string;
+    periodKey: string;
+    status: string;
+    channelsJson: string;
+    summary: string;
+    createdAt: string;
+  }>> {
+    await this.ready;
+    const rows = await this.driver.all<Record<string, unknown>>(
+      `SELECT id, event_key, kind, period_key, status, channels_json, summary, created_at
+       FROM account_notification_deliveries
+       WHERE username = ?
+       ORDER BY created_at DESC
+       LIMIT ?`,
+      [username, Math.max(1, Math.min(50, limit))],
+    );
+    return rows.map((row) => ({
+      id: String(row['id']),
+      eventKey: String(row['event_key']),
+      kind: String(row['kind']),
+      periodKey: String(row['period_key']),
+      status: String(row['status']),
+      channelsJson: String(row['channels_json']),
+      summary: String(row['summary']),
+      createdAt: String(row['created_at']),
+    }));
   }
 
   async enqueueQuotaEmail(username: string, eventKey: string, subject: string, body: string): Promise<void> {

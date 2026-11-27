@@ -1159,7 +1159,7 @@ function typeBadge(type: Category['type']) {
     borderRadius: 'var(--r-pill)',
     padding: '2px 7px',
     color: type === 'income' ? 'var(--positive)' : 'var(--negative)',
-    background: type === 'income' ? 'rgba(63,143,107,.13)' : 'rgba(194,96,74,.13)',
+    background: type === 'income' ? 'var(--ok-surface)' : 'var(--danger-surface)',
     fontSize: 'var(--fs-meta)',
     fontWeight: 'var(--fw-medium)',
   } as const;
@@ -1167,9 +1167,9 @@ function typeBadge(type: Category['type']) {
 
 function stateBadge(kind: 'frequent' | 'hidden' | 'inactive' | 'duplicate' | 'available') {
   const colors = kind === 'frequent'
-    ? { color: 'var(--positive)', background: 'rgba(63,143,107,.13)' }
+    ? { color: 'var(--positive)', background: 'var(--ok-surface)' }
     : kind === 'duplicate'
-      ? { color: 'var(--negative)', background: 'rgba(194,96,74,.13)' }
+      ? { color: 'var(--negative)', background: 'var(--danger-surface)' }
       : kind === 'available'
         ? { color: 'var(--accent)', background: 'var(--accent-soft)' }
         : { color: 'var(--text-tertiary)', background: 'var(--surface-2)' };
@@ -1266,7 +1266,20 @@ function Section<T extends { id: string; version: number }>(props: {
           <thead><tr>{headers.map((h) => <th key={h} style={thStyle}>{h}</th>)}<th style={thStyle}></th></tr></thead>
           <tbody>
             {filteredItems.map((t) => (
-              <tr key={t.id} onClick={() => props.onEdit ? props.onEdit(t) : setEditing(t)} style={{ cursor: 'pointer' }}>
+              <tr
+                key={t.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => props.onEdit ? props.onEdit(t) : setEditing(t)}
+                onKeyDown={(event) => {
+                  if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+                    event.preventDefault();
+                    if (props.onEdit) props.onEdit(t);
+                    else setEditing(t);
+                  }
+                }}
+                style={{ cursor: 'pointer' }}
+              >
                 {row(t).map((c, i) => <td key={i} style={tdStyle}>{c}</td>)}
                 <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>
                   {masterKind && <button type="button" onClick={(event) => { event.stopPropagation(); setLifecycle(t); }} style={{ ...editLinkButton, marginRight: 12 }}>归档/合并</button>}

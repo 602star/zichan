@@ -1,4 +1,4 @@
-import { CardGroup } from '../ui/Card.js';
+import { CardAlert, CardGroup } from '../ui/Card.js';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useCompactView } from '../ui/useCompactView.js';
 import { useScreenTarget } from '../screen-target.js';
@@ -9,7 +9,6 @@ import { useStore } from '../db/store.js';
 import { buildConvert, type ConvertChainVM } from '../selectors/convert.js';
 import { money, signedMoney, amount as fmtAmount, num, significant } from '../format.js';
 import { baseAsset, financialPostings } from '../db/derive.js';
-import { pillBtn } from '../ui/styles.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { WorkspaceDialog } from '../ui/WorkspaceDialog.js';
 import { AssetIcon } from '../ui/AssetIcon.js';
@@ -186,10 +185,10 @@ export function Convert() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      {actionError && <div role="alert">{actionError}</div>}
+      {actionError && <CardAlert tone="danger">{actionError}</CardAlert>}
       <div className="zc-convert-toolbar">
         <div className="zc-convert-view-tabs" role="tablist" aria-label="资产转换视图">
-          {CONVERT_VIEWS.map((mode) => <button key={mode} type="button" {...viewTabs.tabProps(mode)} style={pillBtn(view === mode)}>{mode === 'overview' ? '持仓概览' : mode === 'list' ? '时间线' : mode === 'year' ? '年度' : mode === 'month' ? '月历' : '单日'}</button>)}
+          {CONVERT_VIEWS.map((mode) => <button key={mode} type="button" {...viewTabs.tabProps(mode)} className={`zc-tab${view === mode ? ' is-active' : ''}`}>{mode === 'overview' ? '持仓概览' : mode === 'list' ? '时间线' : mode === 'year' ? '年度' : mode === 'month' ? '月历' : '单日'}</button>)}
         </div>
         <div className="zc-convert-toolbar-actions">
           <button onClick={() => setOpeningCost(true)} className="zc-btn">{snap.costState ? '核对成本起点' : '启用统一成本核算'}</button>
@@ -216,7 +215,7 @@ export function Convert() {
             {snap.accounts.filter((account) => !account.isDeleted && !isLegacyExternalAccount(account)).map((account) => <option key={account.id} value={account.id}>{account.name}{account.isActive === false ? '（已归档）' : ''}</option>)}
           </select>
           <input aria-label="搜索转换" className="zc-input" placeholder="搜索标题、备注或平台" value={search} onChange={(event) => setSearch(event.target.value)} />
-          <button onClick={() => setShowVoided((value) => !value)} style={showVoided ? pillBtn(true) : undefined} className={showVoided ? undefined : 'zc-btn'} aria-pressed={showVoided}>作废记录 {snap.chains.filter((row) => row.chain.recordState === 'voided').length}</button>
+          <button type="button" onClick={() => setShowVoided((value) => !value)} className={`zc-btn${showVoided ? ' zc-btn--primary' : ''}`} aria-pressed={showVoided}>作废记录 {snap.chains.filter((row) => row.chain.recordState === 'voided').length}</button>
         </div>
         <DateRangeBar value={dateRange} onChange={setDateRange} />
         <div className="zc-convert-filter-note">筛选仅作用于历史记录。当前余额包含期初、收支与转换；现值按最新行情折算为 {reportAsset?.code ?? '报表币种'}。</div>
@@ -301,7 +300,7 @@ export function Convert() {
                   const co = openChain === c.chain.id;
                   return (
                     <div key={c.chain.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                      <button onClick={() => setOpenChain(co ? null : c.chain.id)} style={{ width: '100%', border: 'none', background: 'transparent', cursor: 'pointer', padding: '14px 22px', display: 'flex', alignItems: 'center', gap: 16, textAlign: 'left', flexWrap: 'wrap' }}>
+                      <button type="button" aria-expanded={co} onClick={() => setOpenChain(co ? null : c.chain.id)} style={{ width: '100%', border: 'none', background: 'transparent', cursor: 'pointer', padding: '14px 22px', display: 'flex', alignItems: 'center', gap: 16, textAlign: 'left', flexWrap: 'wrap' }}>
                         <span style={badgeStyle(c.chain.type)}>{TYPE_LABEL[c.chain.type] ?? c.chain.type}</span>
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontWeight: 'var(--fw-bold)', overflowWrap: 'anywhere', marginBottom: 5 }}>{c.title}</div>
@@ -399,17 +398,19 @@ export function Convert() {
       </div>
 
       {detail && (compact || !editing && !editingOperation) && <WorkspaceDialog labelledBy={detailTitleId} onDismiss={() => setDetailId(null)} backdropClassName="zc-backdrop zc-conversion-backdrop" panelClassName="zc-conversion-detail"
-      header={<> <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><h2 id={detailTitleId} style={{ flex: 1 }}>{detail.title}</h2><button aria-label="关闭详情" style={pillBtn(false)} onClick={() => setDetailId(null)}>关闭</button></div> </>}
+      header={<> <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><h2 id={detailTitleId} style={{ flex: 1 }}>{detail.title}</h2><button type="button" aria-label="关闭详情" className="zc-btn" onClick={() => setDetailId(null)}>关闭</button></div> </>}
     >
 
         <p>{detail.occurred} · {TYPE_LABEL[detail.chain.type]}</p>
         {detail.steps.map((step) => <section key={step.n} style={{ borderBottom: '1px solid var(--border)', padding: '12px 0' }}><b>{step.from} → {step.to}</b><p>{step.rate}</p><p>{step.accounts}</p>{step.fee && <p>{step.fee}</p>}{step.details.map((text, index) => <p key={index}>{text}</p>)}<details><summary>完整汇率</summary>{step.fullRate}</details></section>)}
         <dl className="zc-conversion-fact-list">{detail.calc.map((row, index) => <div key={index}><dt>{row.l}</dt><dd>{row.v}</dd></div>)}</dl>
-        <button style={pillBtn(false)} onClick={() => void openEditor(detail.chain.id)}>{detail.chain.operationId ? '整组编辑' : '编辑'}</button>
-        <button style={pillBtn(false)} onClick={() => setDeletingChainId(detail.chain.id)}>作废</button>
+        <div style={{ display: 'flex', gap: 'var(--sp-2)', flexWrap: 'wrap', marginTop: 'var(--sp-3)' }}>
+          <button type="button" className="zc-btn zc-btn--primary" onClick={() => void openEditor(detail.chain.id)}>{detail.chain.operationId ? '整组编辑' : '编辑'}</button>
+          <button type="button" className="zc-btn zc-btn--danger" onClick={() => setDeletingChainId(detail.chain.id)}>作废</button>
+        </div>
       </WorkspaceDialog>}
       {activityAsset && <WorkspaceDialog labelledBy={detailTitleId} onDismiss={() => setActivityAssetId(null)} backdropClassName="zc-backdrop zc-conversion-backdrop" panelClassName="zc-conversion-detail"
-      header={<> <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><h2 id={detailTitleId} style={{ flex: 1 }}>{activityAsset.code} · 流水与账户</h2><button aria-label="关闭资产流水" style={pillBtn(false)} onClick={() => setActivityAssetId(null)}>关闭</button></div> </>}
+      header={<> <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><h2 id={detailTitleId} style={{ flex: 1 }}>{activityAsset.code} · 流水与账户</h2><button type="button" aria-label="关闭资产流水" className="zc-btn" onClick={() => setActivityAssetId(null)}>关闭</button></div> </>}
     >
 
         <h3>账户分布</h3>
@@ -419,7 +420,7 @@ export function Convert() {
         {allChains.filter((chain) => chain.assetIds.includes(activityAsset.id)).map((chain) => {
           const stepIds = new Set(snap.chains.filter((row) => row.chain.id === chain.chain.id || (chain.chain.operationId && row.chain.operationId === chain.chain.operationId)).flatMap((row) => row.steps.map((step) => step.id)));
           const flow = activityFlow(activityPostings.filter((posting) => posting.source.kind === 'conversion_step' && stepIds.has(posting.source.id)));
-          return <button key={chain.chain.id} style={{ ...pillBtn(false), display: 'block', width: '100%', textAlign: 'left', marginBottom: 8 }} onClick={() => { setActivityAssetId(null); setDetailId(chain.chain.id); }}>{chain.occurred} · {chain.title}<br />{flow}</button>;
+          return <button key={chain.chain.id} type="button" className="zc-btn" style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: 8, height: 'auto', padding: 'var(--sp-2) var(--sp-3)' }} onClick={() => { setActivityAssetId(null); setDetailId(chain.chain.id); }}>{chain.occurred} · {chain.title}<br />{flow}</button>;
         })}
         <h3>日常收支与转账</h3>
         {snap.transactions.filter((row) => !row.isDeleted && row.recordState !== 'voided' && (row.assetId === activityAsset.id || row.transferAssetId === activityAsset.id)).map((row) => <p key={row.id}>{row.date} · {{ income: '收入', expense: '支出', transfer: '转账', refund: '退款', adjustment: '余额调整' }[row.type]} · {activityFlow(activityPostings.filter((posting) => posting.source.kind === 'transaction' && posting.source.id === row.id))}{row.note ? ` · ${row.note}` : ''}</p>)}

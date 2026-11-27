@@ -11,6 +11,7 @@ const password = 'admin-clarity-fixture-0001';
 const token = 'admin-clarity-owner-setup-000000000';
 
 async function fixture(page) {
+  page.setDefaultTimeout(15_000);
   const server = createSyncServer({ webDir: resolve(root, 'apps/web/dist'), enableWeb: true, registrationMode: 'open', ownerSetupToken: token });
   await server.ready;
   await server.started;
@@ -79,7 +80,9 @@ for (const width of [1280, 390]) {
       expect(saved.request().postDataJSON().settings).toEqual({ backupRetentionCount: 4, backupDirectory: ' D:/fixture-backups ' });
       await expect(page.getByText('本组没有未保存的修改。')).toBeVisible();
       await expect(page.getByLabel('备份位置（部署侧实际路径）', { exact: true })).toHaveValue('D:/fixture-backups');
-      await page.getByRole('tab', { name: '记录保留', exact: true }).click();
+      const retentionTab = page.getByRole('tab', { name: /^记录保留/ });
+      await expect(retentionTab.locator('[aria-label="有未保存改动"]')).toBeVisible();
+      await retentionTab.click();
       await expect(page.getByLabel('运行日志保留条数', { exact: true })).toHaveValue('6000');
       await page.getByRole('button', { name: '放弃本组改动', exact: true }).click();
       await expect(page.getByLabel('运行日志保留条数', { exact: true })).toHaveValue('5000');
@@ -116,6 +119,8 @@ test('dark console keeps direct navigation and returns to the same page', async 
     await expect(page.getByRole('heading', { name: '运行概览' })).toBeVisible();
     await clickAdminLink(page, '系统设置');
     await page.getByRole('tab', { name: '备份计划' }).click();
+    await expect(page.getByRole('tab', { name: '备份计划' })).toHaveAttribute('aria-selected', 'true');
+    await page.getByRole('tab', { name: '运行与环境', exact: true }).click();
     await expect(page.locator('.zc-admin-deployment')).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath('settings-dark.png'), fullPage: true });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

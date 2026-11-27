@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { browserLocalCapability, type FirstUseMode } from '../browser-storage-policy.js';
 import { isTauriRuntime } from '../tauri.js';
+import { BrandMark } from './BrandMark.js';
 
 export interface FirstUseModeGateProps {
   busy: boolean;
@@ -16,16 +17,16 @@ export function BrowserStorageConsent({ busy, onContinue }: { busy: boolean; onC
     <p>普通本地存储仍会加密保存账本，但空间不足时浏览器可能自动清理；清除网站数据会删除账本，无痕窗口关闭后数据通常会丢失。即使取得持久保护，也不能防止手动清理。</p>
     <p>请定期导出加密 .zcbak 到浏览器外并妥善保管密码；浏览器内部的自动备份不算独立备份。</p>
     <label style={{ display: 'block', marginBottom: 12 }}><input type="checkbox" checked={accepted} disabled={busy} onChange={(event) => setAccepted(event.target.checked)} />我了解数据清理风险，会保存浏览器外备份</label>
-    <button type="button" disabled={busy || !accepted} onClick={() => void onContinue()} style={{ padding: '10px 16px' }}>确认风险，继续本地使用</button>
+    <button type="button" className="zc-btn zc-btn--primary" disabled={busy || !accepted} onClick={() => void onContinue()}>确认风险，继续本地使用</button>
   </section>;
 }
 export function FirstUseModeGate({ busy, error = '', onSelect, persistence, onContinueLocal }: FirstUseModeGateProps) {
   const native = isTauriRuntime();
   const capability = browserLocalCapability();
   return (
-    <main style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(24px, 6vw, 72px)', boxSizing: 'border-box', background: 'var(--bg)', color: 'var(--text-primary)', fontFamily: 'system-ui, sans-serif' }}>
+    <main style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(24px, 6vw, 72px)', boxSizing: 'border-box', background: 'var(--bg)', color: 'var(--text-primary)' }}>
       <section style={{ width: 'min(860px, 100%)', margin: '0 auto' }}>
-        <div style={{ color: 'var(--accent)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', letterSpacing: '.12em' }}>ZICHAN · 首次使用</div>
+        <div className="zc-auth-brand" style={{ marginTop: 0 }}><BrandMark /><span>有本</span></div>
         <h1 style={{ margin: '10px 0 6px', color: 'var(--text-primary)', fontSize: 'var(--fs-hero)' }}>选择数据保存方式</h1>
         <p style={{ margin: 0, color: 'var(--text-secondary)', lineHeight: 1.7 }}>之后仍可把纯本地账本连接到一台或多台同步服务器。</p>
         <section aria-label="存储能力与权限状态" style={{ marginTop: 20, padding: 16, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', lineHeight: 1.8 }}>
@@ -51,7 +52,7 @@ export function FirstUseModeGate({ busy, error = '', onSelect, persistence, onCo
           </button>
         </div>
         {!native && capability.supported && persistence?.checked && !persistence.persisted && onContinueLocal && <>
-          <button type="button" disabled={busy} onClick={() => void onSelect('local')} style={{ marginTop: 16, padding: 10 }}>重新申请防自动清理保护</button>
+          <button type="button" className="zc-btn" disabled={busy} onClick={() => void onSelect('local')} style={{ marginTop: 16 }}>重新申请防自动清理保护</button>
           <BrowserStorageConsent busy={busy} onContinue={onContinueLocal} />
         </>}
         {error && (

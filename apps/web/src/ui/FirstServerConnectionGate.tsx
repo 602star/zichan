@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
 import { fetchAuthMe, loginAccount, registerAccount, type SyncAuthSession } from '@zichan/db';
 import { getDeviceId } from '../db/cloud.js';
 import { rememberLoginPassword } from '../login-password.js';
+import { BrandMark } from './BrandMark.js';
 import { PasswordRecovery } from './PasswordRecovery.js';
 import { useCompactView } from './useCompactView.js';
 import { MobilePageHeader, useMobileSection } from './MobilePage.js';
@@ -80,6 +82,7 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
   const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [inviteCode, setInviteCode] = useState('');
   const [registering, setRegistering] = useState(false);
   useEffect(() => {
@@ -264,10 +267,11 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
     <PasswordRecovery baseUrl={address} expanded onComplete={(value) => { setUsername(value); setPassword(''); setRegistering(false); backAuth(); }} />
   </section></main>;
   return (
-    <main className="zc-auth-page" style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(20px, 5vw, 64px)', boxSizing: 'border-box', background: 'var(--bg)', color: 'var(--text-primary)', fontFamily: 'system-ui, sans-serif' }}>
+    <main className="zc-auth-page" style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(20px, 5vw, 64px)', boxSizing: 'border-box', background: 'var(--bg)', color: 'var(--text-primary)' }}>
       <section style={{ width: accountOnly ? 'min(440px, 100%)' : 'min(780px, 100%)', margin: '0 auto' }}>
         {!accountOnly && <button type="button" onClick={onCancel} disabled={busy} className="zc-btn" style={{ minHeight: 34, padding: '0 11px' }}>返回模式选择</button>}
-        <h1 style={{ margin: '18px 0 6px', color: 'var(--text-primary)', fontSize: 'var(--fs-hero)' }}>{accountOnly ? registering ? '注册账号' : '账号登录' : '连接同步服务器'}</h1>
+        <div className="zc-auth-brand"><BrandMark /><span>有本</span></div>
+        <h1 style={{ margin: '12px 0 6px', color: 'var(--text-primary)', fontSize: 'var(--fs-hero)' }}>{accountOnly ? registering ? '注册账号' : '账号登录' : '连接同步服务器'}</h1>
         <p style={{ margin: '0 0 22px', color: 'var(--text-secondary)', lineHeight: 1.7 }}>{accountOnly ? '使用账号密码登录并打开账本。本机自动准备离线访问，联网后继续同步。' : '先验证服务器身份并登录。服务器地址可以来自当前网站、本机、局域网或公网。'}</p>
 
         <div style={{ padding: 'clamp(20px, 4vw, 28px)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', background: 'var(--surface)' }}>
@@ -296,8 +300,8 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
           <div className="zc-login-fields">
             {registering && <label className="zc-field">昵称<input className="zc-input" aria-label="昵称" value={displayName} onChange={(event) => { setDisplayName(event.target.value); setError(''); }} disabled={busy} autoComplete="nickname" required maxLength={48} placeholder="例如：小明" style={input} /><small className="zc-caption">显示给自己看的名称，之后可以修改，支持中文。</small></label>}
             <label className="zc-field">{registering ? '登录账号' : '登录账号或邮箱'}<input className="zc-input" aria-label="服务器用户名" value={username} onChange={(event) => { setUsername(event.target.value); setError(''); }} disabled={busy} autoComplete="username" autoCapitalize="none" spellCheck={false} maxLength={registering ? 64 : 254} required autoFocus={accountOnly} placeholder={registering ? '例如：xiaoming 或 小明' : '输入登录账号或已绑定邮箱'} style={input} />{registering && <small className="zc-caption">用于登录，注册后暂不能修改；支持 2 至 64 个中文、字母、数字或 _ . -。</small>}</label>
-            <label className="zc-field">账号密码<input className="zc-input" aria-label="服务器账号密码" type="password" value={password} onChange={(event) => { setPassword(event.target.value); setError(''); }} disabled={busy} autoComplete={registering ? 'new-password' : 'current-password'} required minLength={8} style={input} /></label>
-            {registering && <label className="zc-field">确认账号密码<input className="zc-input" aria-label="确认账号密码" type="password" required minLength={8} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} disabled={busy} autoComplete="new-password" style={input} /></label>}
+            <label className="zc-field">账号密码<span className="zc-password-wrap"><input className="zc-input" aria-label="服务器账号密码" type={showPassword ? 'text' : 'password'} value={password} onChange={(event) => { setPassword(event.target.value); setError(''); }} disabled={busy} autoComplete={registering ? 'new-password' : 'current-password'} required minLength={8} style={input} /><button type="button" className="zc-btn zc-btn--ghost zc-btn--icon zc-password-toggle" aria-label={showPassword ? '隐藏密码' : '显示密码'} aria-pressed={showPassword} onClick={() => setShowPassword((value) => !value)}>{showPassword ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}</button></span></label>
+            {registering && <label className="zc-field">确认账号密码<input className="zc-input" aria-label="确认账号密码" type={showPassword ? 'text' : 'password'} required minLength={8} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} disabled={busy} autoComplete="new-password" style={input} /></label>}
             {health?.registrationMode === 'invite' && (!accountOnly || registering) && <label className="zc-field">邀请码<input className="zc-input" aria-label="邀请码" value={inviteCode} onChange={(event) => { setInviteCode(event.target.value); setError(''); }} disabled={busy} style={input} /></label>}
           </div>
 
@@ -307,14 +311,14 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
             <button className="zc-btn zc-btn--primary" type="submit" disabled={busy || health?.claimed === false || health?.ledgerWebAccess === false}>{busy ? '处理中…' : registering ? '注册并登录' : '登录'}</button>
             <div className="zc-login-secondary-actions">
               <button className="zc-btn" type="button" onClick={() => { setRegistering((value) => !value); openAuth(registering ? 'login' : 'register'); }} disabled={busy || !registering && (health?.claimed === false || health?.registrationMode === 'closed')}>{registering ? '返回登录' : '注册新账号'}</button>
-              <button className="zc-btn zc-btn--ghost" type="button" onClick={() => void inspectServer()} disabled={busy}>{accountOnly ? '重试连接' : '检查服务器'}</button>
+              {(!accountOnly || Boolean(error) || !health) && <button className="zc-btn zc-btn--ghost" type="button" onClick={() => void inspectServer()} disabled={busy}>{accountOnly ? '重试连接' : '检查服务器'}</button>}
             </div>
           </div>
           </form>
           {error && <div role="alert" style={{ marginTop: 12, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{error}</div>}
           {message && <div role="status" style={{ marginTop: 12, color: 'var(--positive)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{message}</div>}
           {health?.claimed && !registering && (compact ? <button type="button" className="zc-btn zc-btn--ghost" onClick={() => openAuth('recovery')}>忘记账号密码</button> : <div style={{ maxWidth: 440 }}><PasswordRecovery baseUrl={address} onComplete={(value) => { setUsername(value); setRegistering(false); }} /></div>)}
-          {accountOnly && <section aria-label="账号登录权限说明" style={{ marginTop: 18, fontSize: 'var(--fs-caption)', lineHeight: 1.7 }}><strong>登录会使用什么权限？</strong><p>验证本站账号并建立 HttpOnly 会话 Cookie。登录后用账号密码加密本浏览器的离线解锁资料，不保存明文密码。</p></section>}
+          {accountOnly && <details className="zc-auth-privacy" aria-label="账号登录权限说明"><summary>登录与离线访问说明</summary><p>验证本站账号并建立安全会话；本机离线解锁资料使用账号密码加密保存，不保存明文密码。</p></details>}
           {accountOnly && identityProviders.length > 0 && <section style={{ marginTop: 18, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
             <strong>使用统一账号登录</strong>
             <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}>账号资料已同步时，可直接在上方输入账号密码登录；首次开通尚未完成时，也可通过身份节点登录。</p>

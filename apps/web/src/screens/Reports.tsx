@@ -386,7 +386,7 @@ export function Reports() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       <div className="zc-report-tabs" style={{ display: 'flex', gap: 8 }}>
         {TABS.map(([id, label]) => (
-          (!compactView || ['transactions', 'fixed', 'season'].includes(id) || tab === id) && <button key={id} aria-pressed={tab === id} onClick={() => { setTab(id); setExportMenuOpen(false); }} style={pillBtn(tab === id)}>{compactView ? ({ transactions: '收支', fixed: '物品', season: '游戏' } as Record<string, string>)[id] ?? label : label}</button>
+          (!compactView || ['transactions', 'fixed', 'season'].includes(id) || tab === id) && <button key={id} type="button" aria-pressed={tab === id} onClick={() => { setTab(id); setExportMenuOpen(false); }} className={`zc-tab${tab === id ? ' is-active' : ''}`}>{compactView ? ({ transactions: '收支', fixed: '物品', season: '游戏' } as Record<string, string>)[id] ?? label : label}</button>
         ))}
         {compactView && <button type="button" className="zc-btn" onClick={() => setReportPickerOpen(true)}>更多报表</button>}
       </div>
@@ -1047,7 +1047,7 @@ function ReportChart(props: {
             testId="composition-parent"
             slices={slices}
           />
-          {children && (
+          {children ? (
             <CompositionDonut
               ariaLabel={`${parentLabel} 的二级构成`}
               totalText={report.formatReport(D(children.total))}
@@ -1057,7 +1057,12 @@ function ReportChart(props: {
               testId="composition-children"
               slices={childSlices}
             />
-          )}
+          ) : slices.length > 0 ? (
+            <div className="zc-chart-drill-placeholder">
+              <strong>二级分类细分</strong>
+              <span>点击左侧任一板块，在此查看该板块的二级分类占比与明细。</span>
+            </div>
+          ) : null}
         </div>
       ) : (
         <RankBars

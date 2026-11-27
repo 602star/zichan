@@ -191,8 +191,8 @@ export function QuickCategorySettings({ categories, onSave }: QuickCategorySetti
         <div>
           <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>快速记账分类</div>
           <div style={{ display: 'flex', gap: 7, marginTop: 9 }}>
-            <button type="button" onClick={() => selectType('expense')} style={segmentButton(type === 'expense')}>支出</button>
-            <button type="button" onClick={() => selectType('income')} style={segmentButton(type === 'income')}>收入</button>
+            <button type="button" onClick={() => selectType('expense')} aria-pressed={type === 'expense'} className={type === 'expense' ? 'zc-btn zc-btn--primary' : 'zc-btn'} style={{ minWidth: 70 }}>支出</button>
+            <button type="button" onClick={() => selectType('income')} aria-pressed={type === 'income'} className={type === 'income' ? 'zc-btn zc-btn--primary' : 'zc-btn'} style={{ minWidth: 70 }}>收入</button>
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -404,18 +404,4 @@ function OrderButtons({ name, index, total, onMove }: {
 
 function EmptyRow({ text }: { text: string }) {
   return <div style={{ padding: '16px 10px', color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>{text}</div>;
-}
-
-function segmentButton(active: boolean) {
-  return {
-    minWidth: 70,
-    height: 32,
-    border: '1px solid var(--border)',
-    borderRadius: 'var(--r-sm)',
-    background: active ? 'var(--accent)' : 'var(--surface)',
-    color: active ? 'var(--on-accent)' : 'var(--fg-muted)',
-    fontSize: 'var(--fs-caption)',
-    fontWeight: 'var(--fw-medium)',
-    cursor: 'pointer',
-  } as const;
 }

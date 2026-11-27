@@ -352,8 +352,8 @@ export function QuickExpenseModal({
         {error && <div role="alert" style={{ marginTop: 14, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{error}</div>}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
-          <button type="button" onClick={requestClose} disabled={busy} style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--surface)', color: 'var(--text-secondary)', padding: '10px 16px', fontWeight: 'var(--fw-bold)', cursor: 'pointer' }}>取消</button>
-          <button type="button" onClick={() => void submit()} disabled={busy || assetPresetBusy} style={{ border: '1px solid var(--accent)', borderRadius: 'var(--r-sm)', background: 'var(--accent)', color: 'var(--on-accent)', padding: '10px 20px', fontWeight: 'var(--fw-bold)', cursor: busy || assetPresetBusy ? 'wait' : 'pointer' }}>{busy ? '保存中…' : '保存支出'}</button>
+          <button type="button" className="zc-btn" onClick={requestClose} disabled={busy}>取消</button>
+          <button type="button" className="zc-btn zc-btn--primary" onClick={() => void submit()} disabled={busy || assetPresetBusy}>{busy ? '保存中…' : '保存支出'}</button>
         </div>
       </>}
     >

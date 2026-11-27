@@ -117,7 +117,7 @@ export function FirstRemoteLedgerRestoreGate(props: {
   }
 
   return (
-    <main style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(22px, 6vw, 70px)', boxSizing: 'border-box', background: 'var(--bg)', color: 'var(--text-primary)', fontFamily: 'system-ui, sans-serif' }}>
+    <main style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(22px, 6vw, 70px)', boxSizing: 'border-box', background: 'var(--bg)', color: 'var(--text-primary)' }}>
       <section style={{ width: 'min(720px, 100%)', margin: '3vh auto 0', padding: 'clamp(22px, 5vw, 36px)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', background: 'var(--surface-2)' }}>
         <div style={{ color: 'var(--accent)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', letterSpacing: '.1em' }}>发现已有远端账本</div>
         <h1 style={{ margin: '10px 0 8px', color: 'var(--text-primary)', fontSize: 'var(--fs-hero)' }}>从 {props.connection.alias} 恢复</h1>

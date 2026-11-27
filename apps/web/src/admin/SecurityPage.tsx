@@ -8,7 +8,7 @@
 import { useEffect, useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { PageHeader, Badge, Button, Field, Loading, Notice, Panel, PanelIndex, sectionId, Stat, TextInput, message, row, useActionError, useResource, when } from './ui.js';
+import { PageHeader, Badge, Button, CopyValue, Field, Loading, Notice, Panel, PanelIndex, sectionId, Stat, TextInput, message, row, useActionError, useResource, when } from './ui.js';
 import type { MfaStatusPayload } from './types.js';
 
 interface Enrollment {
@@ -120,7 +120,7 @@ export function SecurityPage({ client, username, role, onPasswordChanged }: {
             <TextInput aria-label="再次输入新密码" type="password" autoComplete="new-password" value={confirmation} disabled={busy} onChange={(event) => setConfirmation(event.target.value)} />
           </Field>
           <div>
-            <Button disabled={busy || !currentPassword || nextPassword.length < 8 || nextPassword !== confirmation} onClick={() => { void changeOwnPassword(); }}>确认修改账号密码</Button>
+            <Button variant="primary" disabled={busy || !currentPassword || nextPassword.length < 8 || nextPassword !== confirmation} onClick={() => { void changeOwnPassword(); }}>确认修改账号密码</Button>
           </div>
         </div>
         {passwordNotice ? <Notice tone="info">{passwordNotice}</Notice> : null}
@@ -143,18 +143,18 @@ export function SecurityPage({ client, username, role, onPasswordChanged }: {
 
       {!data.enabled && !enrollment
         ? <Panel title="启用两步验证" note="支持任何兼容 TOTP 的验证书应用（Google Authenticator、1Password、Microsoft Authenticator 等）。">
-          <Button disabled={busy} onClick={begin}>生成绑定密钥</Button>
+          <Button variant="primary" disabled={busy} onClick={begin}>生成绑定密钥</Button>
         </Panel>
         : null}
 
       {enrollment
         ? <Panel title="完成绑定" note="绑定密钥只显示这一次，关闭后需要重新生成。">
-          <Field label="绑定密钥（手动输入时使用）"><TextInput readOnly value={enrollment.secret} style={{ width: 320, fontFamily: 'monospace' }} /></Field>
-          <Field label="otpauth 链接（可复制到支持导入的应用）"><TextInput readOnly value={enrollment.otpauthUrl} style={{ width: '100%', fontFamily: 'monospace' }} /></Field>
+          <Field label="绑定密钥（手动输入时使用）"><div style={row}><TextInput readOnly value={enrollment.secret} style={{ width: 320, fontFamily: 'monospace' }} /><CopyValue value={enrollment.secret} /></div></Field>
+          <Field label="otpauth 链接（可复制到支持导入的应用）"><div style={row}><TextInput readOnly value={enrollment.otpauthUrl} style={{ flex: '1 1 320px', fontFamily: 'monospace' }} /><CopyValue value={enrollment.otpauthUrl} /></div></Field>
           <Field label="输入验证书应用当前显示的 6 位验证码">
             <div style={row}>
               <TextInput aria-label="两步验证码" inputMode="numeric" autoComplete="one-time-code" maxLength={9} value={code} disabled={busy} onChange={(event) => setCode(event.target.value)} style={{ width: 140 }} />
-              <Button disabled={busy || !code.trim()} onClick={() => { void confirm(); }}>确认并启用</Button>
+              <Button variant="primary" disabled={busy || !code.trim()} onClick={() => { void confirm(); }}>确认并启用</Button>
               <Button disabled={busy} onClick={() => { setEnrollment(undefined); setCode(''); }}>取消绑定</Button>
             </div>
           </Field>
@@ -164,7 +164,10 @@ export function SecurityPage({ client, username, role, onPasswordChanged }: {
       {recoveryCodes.length
         ? <Panel title="一次性恢复码" note="每行一个，每个只能使用一次；丢失设备时用它登录，登录后会提示重新绑定。">
           <pre style={{ margin: 0, padding: 12, borderRadius: 'var(--r-sm)', background: 'var(--surface-muted)', fontFamily: 'monospace', userSelect: 'all' }}>{recoveryCodes.join('\n')}</pre>
-          <Button style={{ marginTop: 10 }} disabled={busy} onClick={() => { setRecoveryCodes([]); setNotice('恢复码已从页面隐藏。'); }}>我已保存，隐藏恢复码</Button>
+          <div style={{ ...row, marginTop: 10 }}>
+            <CopyValue value={recoveryCodes.join('\n')} label="复制全部恢复码" />
+            <Button disabled={busy} onClick={() => { setRecoveryCodes([]); setNotice('恢复码已从页面隐藏。'); }}>我已保存，隐藏恢复码</Button>
+          </div>
         </Panel>
         : null}
 
@@ -179,7 +182,7 @@ export function SecurityPage({ client, username, role, onPasswordChanged }: {
           <Panel title="关闭两步验证" note={data.required ? '服务器当前要求管理员必须启用，关闭会被服务端拒绝；请先让所有者关闭该要求。' : '需要输入当前验证码或一枚恢复码确认身份。'}>
             <div style={row}>
               <TextInput aria-label="关闭两步验证的验证码" inputMode="numeric" maxLength={9} value={disableCode} disabled={busy} onChange={(event) => setDisableCode(event.target.value)} style={{ width: 140 }} />
-              <Button disabled={busy || !disableCode.trim()} onClick={() => { void disable(); }}>关闭两步验证</Button>
+              <Button variant="danger" disabled={busy || !disableCode.trim()} onClick={() => { void disable(); }}>关闭两步验证</Button>
             </div>
           </Panel>
         </>

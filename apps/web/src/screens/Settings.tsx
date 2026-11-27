@@ -700,8 +700,8 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
             </button>
             <div className="zc-settings-grid">
               <div className="zc-field">
-                <label className="zc-label">全局报表币种</label>
-                <select aria-label="全局报表币种" className="zc-select" value={setting?.baseCurrencyAssetId ?? base?.id ?? ''} onChange={(e) => onBaseCurrency(e.target.value)}>
+                <label className="zc-label" htmlFor="zc-setting-base-currency">全局报表币种</label>
+                <select id="zc-setting-base-currency" aria-label="全局报表币种" className="zc-select" value={setting?.baseCurrencyAssetId ?? base?.id ?? ''} onChange={(e) => onBaseCurrency(e.target.value)}>
                   {snap.assets.filter((a) => !a.isDeleted).map((a) => (
                     <option key={a.id} value={a.id}>{a.code} · {a.name}</option>
                   ))}
@@ -719,8 +719,8 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                       : setting?.gameDefaultSettlementAssetId;
                 return (
                   <div key={module} className={`zc-field${module === 'transaction' ? '' : ' zc-settings-advanced-field'}`}>
-                    <label className="zc-label">{label}</label>
-                    <select aria-label={label} className="zc-select" value={fieldValue ?? ''} disabled={module === 'transaction' && currencyPresetBusy} onChange={(e) => void onModuleCurrency(module, e.target.value)}>
+                    <label className="zc-label" htmlFor={`zc-setting-currency-${module}`}>{label}</label>
+                    <select id={`zc-setting-currency-${module}`} aria-label={label} className="zc-select" value={fieldValue ?? ''} disabled={module === 'transaction' && currencyPresetBusy} onChange={(e) => void onModuleCurrency(module, e.target.value)}>
                       <option value="">沿用全局 · {snap.assets.find((a) => a.id === moduleCurrencyId(setting, module))?.code ?? '未设置'}</option>
                       {snap.assets.filter((a) => !a.isDeleted).map((a) => <option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}
                       {module === 'transaction' && ASSET_PRESET_GROUPS.map((group) => {
@@ -736,20 +736,21 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                 );
               })}
               <div className="zc-field zc-settings-advanced-field">
-                <label className="zc-label">默认卖出匹配方式</label>
-                <select aria-label="默认卖出匹配方式" className="zc-select" value={setting?.defaultLotMethod ?? 'fifo'} onChange={(e) => saveSetting({ defaultLotMethod: e.target.value as LotMethod })}>
+                <label className="zc-label" htmlFor="zc-setting-lot-method">默认卖出匹配方式</label>
+                <select id="zc-setting-lot-method" aria-label="默认卖出匹配方式" className="zc-select" value={setting?.defaultLotMethod ?? 'fifo'} onChange={(e) => saveSetting({ defaultLotMethod: e.target.value as LotMethod })}>
                   {METHODS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                 </select>
               </div>
               {(['expense', 'income'] as const).map((direction) => <div className="zc-field" key={direction}>
-                <label className="zc-label">{direction === 'expense' ? '支出默认账户' : '收入默认账户'}</label>
-                <select className="zc-select" aria-label={direction === 'expense' ? '支出默认账户' : '收入默认账户'} value={(direction === 'expense' ? setting?.expenseDefaultAccountId : setting?.incomeDefaultAccountId) ?? ''} onChange={(e) => saveSetting(direction === 'expense' ? { expenseDefaultAccountId: e.target.value } : { incomeDefaultAccountId: e.target.value })}>
+                <label className="zc-label" htmlFor={`zc-setting-default-account-${direction}`}>{direction === 'expense' ? '支出默认账户' : '收入默认账户'}</label>
+                <select id={`zc-setting-default-account-${direction}`} className="zc-select" aria-label={direction === 'expense' ? '支出默认账户' : '收入默认账户'} value={(direction === 'expense' ? setting?.expenseDefaultAccountId : setting?.incomeDefaultAccountId) ?? ''} onChange={(e) => saveSetting(direction === 'expense' ? { expenseDefaultAccountId: e.target.value } : { incomeDefaultAccountId: e.target.value })}>
                   {snap.accounts.filter((a) => a.isActive !== false && !isLegacyExternalAccount(a)).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
                 </select><p className="zc-meta">仅用于新的记录，已有记录保留原账户。全部功能均可使用。</p>
               </div>)}
               <div className="zc-field">
-                <label className="zc-label">账本日 · 报表算到哪一天</label>
+                <label className="zc-label" htmlFor="zc-setting-asof-date">账本日 · 报表算到哪一天</label>
                 <input
+                  id="zc-setting-asof-date"
                   aria-label="账本日"
                   className="zc-input"
                   type="date"
@@ -785,8 +786,8 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                 </p>
               </div>
               <div className="zc-field zc-settings-advanced-field">
-                <label className="zc-label">退款统计归属</label>
-                <select aria-label="退款统计归属" className="zc-select" value={setting?.refundAttributionMode ?? 'original_date'} onChange={(e) => saveSetting({ refundAttributionMode: e.target.value as 'original_date' | 'refund_date' })}>
+                <label className="zc-label" htmlFor="zc-setting-refund-mode">退款统计归属</label>
+                <select id="zc-setting-refund-mode" aria-label="退款统计归属" className="zc-select" value={setting?.refundAttributionMode ?? 'original_date'} onChange={(e) => saveSetting({ refundAttributionMode: e.target.value as 'original_date' | 'refund_date' })}>
                   <option value="original_date">冲减原消费日期</option>
                   <option value="refund_date">计入实际退款日期</option>
                 </select>
@@ -826,8 +827,9 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
             <div id="zc-settings-categories-body" className="zc-settings-collapsible-body">
               <div className="zc-settings-category-grid">
                 <div className="zc-field">
-                  <label className="zc-label">记账弹窗默认分类范围</label>
+                  <label className="zc-label" htmlFor="zc-setting-category-scope">记账弹窗默认分类范围</label>
                   <select
+                    id="zc-setting-category-scope"
                     aria-label="记账弹窗默认分类范围"
                     className="zc-select"
                     value={setting?.categoryPickerDefaultScope ?? 'frequent'}

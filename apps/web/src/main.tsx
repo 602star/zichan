@@ -44,8 +44,8 @@ function ManagementEntry() {
     };
   }, [baseUrl]);
   if (baseUrl) return <AdminApp baseUrl={baseUrl} />;
-  return <main><p role={error ? 'alert' : 'status'}>{error || '正在连接管理服务器…'}</p>
-    {error && <button onClick={() => setAttempt((value) => value + 1)}>重新连接</button>}</main>;
+  return <main className="zc-loading-state"><p role={error ? 'alert' : 'status'}>{error || '正在连接管理服务器…'}</p>
+    {error && <button type="button" className="zc-btn" onClick={() => setAttempt((value) => value + 1)}>重新连接</button>}</main>;
 }
 function TrackedWebAccountApp() {
   useEffect(() => {
@@ -63,8 +63,8 @@ function DesktopLedgerApp() {
     }).catch((reason) => { if (active) setState(reason instanceof Error ? reason.message : String(reason)); });
     return () => { active = false; };
   }, []);
-  if (state === 'loading') return <p role="status">正在核对桌面账本 profile…</p>;
-  if (state !== 'ready') return <p role="alert">{state}</p>;
+  if (state === 'loading') return <p role="status" className="zc-loading-state">正在核对桌面账本 profile…</p>;
+  if (state !== 'ready') return <p role="alert" className="zc-loading-state">{state}</p>;
   return <LedgerApp />;
 }
 const managementPage = adminBaseUrls(window.location).length > 0;
@@ -75,7 +75,7 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <AppErrorBoundary>
       {!managementPage && <OfflineShellStatus />}
-      <Suspense fallback={<p role="status">正在加载…</p>}>
+      <Suspense fallback={<p role="status" className="zc-loading-state">正在加载…</p>}>
         {managementPage ? <ManagementEntry /> : isTauriRuntime() ? <DesktopLedgerApp /> : <TrackedWebAccountApp />}
       </Suspense>
     </AppErrorBoundary>

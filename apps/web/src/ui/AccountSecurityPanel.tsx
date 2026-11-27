@@ -88,13 +88,13 @@ export function AccountSecurityPanel({ onExit }: { onExit?: () => Promise<void> 
         <button className="zc-btn zc-btn--primary" disabled={busy || !oldPassword || password.length < 8 || password !== confirmation}>确认修改账号密码</button>
       </form>
     </details>}
-    <details style={{ marginTop: 16 }}><summary>登录设备</summary>
+    <details style={{ marginTop: 16 }} onToggle={(event) => { if (event.currentTarget.open && devices === undefined && !busy) void run(refresh); }}><summary>登录设备</summary>
       <p>这里列出此账号的登录会话。撤销后，该会话不能继续访问服务器；其他设备上已有的离线副本不会远程删除。</p>
-      <button disabled={busy} onClick={() => void run(refresh)}>刷新登录设备</button>
-      {devices?.map((device) => <div key={device.id} style={{ padding: '10px 0', overflowWrap: 'anywhere' }}>
+      <button type="button" className="zc-btn" disabled={busy} onClick={() => void run(refresh)}>{busy ? '读取中…' : '刷新登录设备'}</button>
+      {devices?.map((device) => <div key={device.id} style={{ padding: '10px 0', borderBottom: '1px solid var(--border)', overflowWrap: 'anywhere', display: 'grid', gap: 6 }}>
         <strong>{device.deviceName || '未命名设备'}{device.id === current ? ' · 当前设备' : ''}</strong>
-        <div>最近访问：{new Date(device.lastSeenAt).toLocaleString()} · {device.active ? '有效' : '已失效'}</div>
-        {device.active && device.id !== current && <button disabled={busy} onClick={() => void run(async () => { await api(`devices/${encodeURIComponent(device.id)}/revoke`); await refresh(); setNotice('已撤销该设备的登录会话。'); })}>退出此设备</button>}
+        <div className="zc-caption">最近访问：{new Date(device.lastSeenAt).toLocaleString()} · {device.active ? '有效' : '已失效'}</div>
+        {device.active && device.id !== current && <div><button type="button" className="zc-btn zc-btn--sm zc-btn--danger" disabled={busy} onClick={() => void run(async () => { await api(`devices/${encodeURIComponent(device.id)}/revoke`); await refresh(); setNotice('已撤销该设备的登录会话。'); })}>退出此设备</button></div>}
       </div>)}
       <p>退出当前设备请使用“退出记账账号”。</p>
     </details>

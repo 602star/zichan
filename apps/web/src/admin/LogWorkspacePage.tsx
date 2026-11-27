@@ -80,12 +80,12 @@ export function LogWorkspacePage({ client, category, query, navigate }: { client
       <form onSubmit={(event) => { event.preventDefault(); update(draft); }}>
         <div className="zc-admin-log-quick-query">
           <TextInput aria-label="关键词" value={draft['search'] ?? ''} onChange={(event) => setDraft({ ...draft, search: event.target.value })} maxLength={128} placeholder={category === 'containers' ? '搜索容器输出' : '搜索消息、事件或上下文'} />
-          <Button type="submit">查询日志</Button>
+          <Button variant="primary" type="submit">查询日志</Button>
         </div>
         <TrendTimeRange label="日志时间范围" query={query} presets={['1h', '24h', '7d', '30d', '90d']} maxDays={90} onChange={patch => update({ ...patch, ...(patch.range === 'custom' ? { range: '24h' } : {}) })} />
         <details className="zc-admin-log-extra-filters"><summary>筛选条件{filterFields.some((field) => Boolean(query.get(field.key))) ? ` · ${filterFields.filter((field) => Boolean(query.get(field.key))).length} 项已启用` : ' · 按字段'}</summary>
           <div className="zc-admin-log-filters">{filterFields.map(filterControl)}</div>
-          <div className="zc-admin-ops-toolbar"><Button type="submit">应用筛选</Button><Button onClick={() => { setTrail([]); navigate(definition.path); }}>清除筛选</Button>
+          <div className="zc-admin-ops-toolbar" style={{ alignItems: 'flex-end' }}><Button variant="primary" type="submit">应用筛选</Button><Button onClick={() => { setTrail([]); navigate(definition.path); }}>清除筛选</Button>
             <Button aria-pressed={following} disabled={Boolean(query.get('cursor') || query.get('until'))} onClick={() => setFollowing(!following)}>{following ? '暂停追踪' : '追踪新日志'}</Button>
             <Field label="每页条数"><Select value={query.get('limit') ?? '50'} onChange={(event) => update({ limit: event.target.value })}>{[25,50,100,200].map((n) => <option key={n} value={n}>{n} 条</option>)}</Select></Field>
           </div>

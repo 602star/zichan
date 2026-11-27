@@ -1,7 +1,7 @@
 /** Sync diagnostics: every server-visible failure with a reason and a next step. */
 import { AccountFilter, TimeRangeFilter } from './filters.js';
 import type { AdminClient } from './client.js';
-import { PageHeader, FilterBar, Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Panel, Select, muted, row, useCursorPager, useHiddenColumns, useResource, when } from './ui.js';
+import { PageHeader, FilterBar, Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Panel, Select, bytes, muted, row, useCursorPager, useHiddenColumns, useResource, when } from './ui.js';
 import { PageSizeSelect, listParamsQuery, readListParams, sortableHeader, type SortChoice } from './list-controls.js';
 import { SYNC_CATEGORIES, type SyncEvent } from './types.js';
 
@@ -112,7 +112,7 @@ export function SyncPage({ client, query, navigate }: { client: AdminClient; que
             },
             { key: 'operation', header: '操作类型', ...sortHeader('operation', '操作类型'), render: (event) => event.operation },
             { key: 'commits', header: '提交数量', secondary: true, optional: true, ...sortHeader('commits', '提交数量'), render: (event) => event.commitCount === undefined ? '暂无数据' : String(event.commitCount) },
-            { key: 'bytes', header: '传输字节', secondary: true, optional: true, render: (event) => event.bytes === undefined ? '暂无数据' : String(event.bytes) },
+            { key: 'bytes', header: '传输字节', secondary: true, optional: true, render: (event) => event.bytes === undefined ? '暂无数据' : bytes(event.bytes) },
             { key: 'duration', header: '耗时', ...sortHeader('duration', '耗时'), render: (event) => event.durationMs === undefined ? '暂无数据' : `${event.durationMs} ms` },
             { key: 'result', header: '结果', render: (event) => event.outcome === 'ok' ? <Badge tone="ok">成功</Badge> : <Badge tone="bad">{event.resultCode ?? '失败'}</Badge> },
             { key: 'reason', header: '原因', render: (event) => SYNC_CATEGORIES.find((entry) => entry.value === event.category)?.label ?? '暂无数据' },

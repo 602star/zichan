@@ -1774,7 +1774,19 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
             <thead><tr><th style={thStyle}>启用</th><th style={thStyle}>别名</th><th style={thStyle}>地址</th><th style={thStyle}>用户</th><th style={thStyle}>状态</th><th style={thStyle}>延迟</th><th style={thStyle}></th></tr></thead>
             <tbody>
               {profiles.map((p) => (
-                <tr key={p.id} onClick={() => setSelectedId(p.id)} style={{ cursor: 'pointer', background: selected?.id === p.id ? 'var(--accent-soft)' : 'transparent' }}>
+                <tr
+                  key={p.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setSelectedId(p.id)}
+                  onKeyDown={(event) => {
+                    if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+                      event.preventDefault();
+                      setSelectedId(p.id);
+                    }
+                  }}
+                  style={{ cursor: 'pointer', background: selected?.id === p.id ? 'var(--accent-soft)' : 'transparent' }}
+                >
                   <td style={tdStyle}><span className="zc-check-target" onClick={(e) => e.stopPropagation()}><input aria-label={`启用 ${p.alias}`} type="checkbox" checked={p.enabled} disabled={isPrimaryWebConnection(p)} onChange={(e) => patchProfile(p.id, { enabled: e.target.checked })} onClick={(e) => e.stopPropagation()} /></span></td>
                   <td style={tdStyle}>
                     <button type="button" aria-label={`编辑服务器 ${p.alias}`} aria-current={selected?.id === p.id ? 'true' : undefined} onClick={(event) => { event.stopPropagation(); setSelectedId(p.id); }} style={{ border: 0, padding: 0, background: 'transparent', color: 'inherit', font: 'inherit', textAlign: 'left', cursor: 'pointer' }}>
@@ -1925,8 +1937,9 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
             {' '}{(attachmentTransfer.totalBytes / 1024 / 1024).toFixed(1)} MiB
             {attachmentTransfer.resumedBytes > 0
               && ` · 已续传 ${(attachmentTransfer.resumedBytes / 1024 / 1024).toFixed(1)} MiB`}</div>
-          <progress aria-label="附件传输进度" max={attachmentTransfer.totalBytes || 1}
-            value={attachmentTransfer.transferredBytes} style={{ width: '100%', maxWidth: 420 }} />
+          <div className="zc-quota-meter" role="progressbar" aria-label="附件传输进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={attachmentTransfer.totalBytes > 0 ? Math.min(100, Math.round(attachmentTransfer.transferredBytes / attachmentTransfer.totalBytes * 100)) : 0} style={{ width: '100%', maxWidth: 420, marginTop: 6 }}>
+            <span style={{ width: `${attachmentTransfer.totalBytes > 0 ? Math.min(100, Math.round(attachmentTransfer.transferredBytes / attachmentTransfer.totalBytes * 100)) : 0}%` }} />
+          </div>
         </div>}
         {autoSyncEnabled && attachmentBatch && (
           <div style={{ fontSize: 'var(--fs-caption)', color: attachmentBatch.error ? 'var(--negative)' : 'var(--text-secondary)', marginTop: 10 }}>

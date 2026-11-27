@@ -53,6 +53,18 @@ import { createJobRunner } from './jobs.js';
 import { createHashOffload } from './hash-offload.js';
 import { parseAlertChannels, type EmailChannel } from './alert-channels.js';
 import { sendEmail } from './smtp-client.js';
+import {
+  defaultUserNotificationPreferences,
+  maskUserNotificationPreferences,
+  mergeUserNotificationSecrets,
+  parseUserNotificationPreferences,
+  previewUserNotification,
+  runDueUserNotifications,
+  sendTestUserNotification,
+  USER_NOTIFICATION_KINDS,
+  type PushDeliverer,
+  type UserNotificationKind,
+} from './user-reports.js';
 import { importMaintenanceRecords } from './maintenance-records.js';
 import { MAINTENANCE_KEY, createWriteTracker, isClientWrite, resolveMaintenance, type MaintenanceState } from './maintenance-mode.js';
 import { createMetricsService } from './metrics.js';
@@ -382,7 +394,11 @@ export interface SyncServerOptions {
   trafficCountryHeader?: string;
   allowInsecureHttp?: boolean;
   /** Injectable delivery for integration tests; deployments use the configured SMTP channel. */
-  accountEmailSender?: (to: string, subject: string, body: string) => Promise<void>;
+  accountEmailSender?: (to: string, subject: string, body: string, html?: string) => Promise<void>;
+  /** Injectable webhook/Bark delivery for user report integration tests. */
+  notificationPushSender?: PushDeliverer;
+  /** Optional clock override for deterministic scheduled report tests. */
+  notificationClock?: () => Date;
 }
 
 export interface SyncServer {
@@ -396,6 +412,8 @@ export interface SyncServer {
   started: Promise<void>;
   /** Drain pending account mail immediately; the background worker also runs every minute. */
   flushAccountEmails: () => Promise<void>;
+  /** Run one user report & inactivity notification pass immediately. */
+  flushUserNotifications: () => Promise<{ processedUsers: number; deliveries: number }>;
   /** Run one outbound node replication pass immediately. */
   flushNodeReplication: () => Promise<void>;
   flushGroupReplication: () => Promise<void>;
@@ -609,11 +627,11 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     if (options.accountEmailSender) return true;
     try { return Boolean(accountEmailChannel()); } catch { return false; }
   };
-  const sendAccountMessage = async (to: string, subject: string, body: string): Promise<void> => {
-    if (options.accountEmailSender) return options.accountEmailSender(to, subject, body);
+  const sendAccountMessage = async (to: string, subject: string, body: string, html?: string): Promise<void> => {
+    if (options.accountEmailSender) return options.accountEmailSender(to, subject, body, html);
     const channel = accountEmailChannel();
     if (!channel) throw new Error('服务器尚未配置邮件发送渠道');
-    await sendEmail({ ...channel, requireTls: true }, { to: [to], subject, body });
+    await sendEmail({ ...channel, requireTls: true }, { to: [to], subject, body, ...(html ? { html } : {}) });
   };
 
   /**
@@ -848,6 +866,30 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
   };
   const accountEmailTimer = setInterval(processAccountEmails, 60_000);
   accountEmailTimer.unref?.();
+  const userReportDeps = {
+    store,
+    previewOptions: { store, custodyKey: () => custodyKey, serverId },
+    emailAvailable: accountEmailAvailable,
+    sendEmail: sendAccountMessage,
+    ...(options.notificationPushSender ? { sendPush: options.notificationPushSender } : {}),
+    ...(options.notificationClock ? { now: options.notificationClock } : {}),
+    log: (level: 'info' | 'warn' | 'error', action: string, message: string, meta?: Record<string, unknown>) => log(level, action, message, meta),
+  };
+  let userNotificationsFlight: Promise<{ processedUsers: number; deliveries: number }> | undefined;
+  const runUserNotifications = (): Promise<{ processedUsers: number; deliveries: number }> => {
+    if (userNotificationsFlight) return userNotificationsFlight;
+    userNotificationsFlight = runDueUserNotifications(userReportDeps)
+      .catch(async (error) => {
+        await log('warn', 'user_notifications_worker_failed', 'User notification scheduler failed', {
+          detail: { reason: error instanceof Error ? error.message : String(error) },
+        }).catch(() => undefined);
+        return { processedUsers: 0, deliveries: 0 };
+      })
+      .finally(() => { userNotificationsFlight = undefined; });
+    return userNotificationsFlight;
+  };
+  const userNotificationsTimer = setInterval(() => { void runUserNotifications(); }, 15 * 60_000);
+  userNotificationsTimer.unref?.();
   const queueWatchdog = setInterval(() => jobs.kick(), 60_000);
   queueWatchdog.unref?.();
   const started = ready.then(async () => {
@@ -2371,6 +2413,93 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         await log('info', 'account_email_removed', 'Account email removed', { username: user.username });
         return send(res, 200, await store.accountEmail(user.username));
       }
+      if (apiPath === '/api/auth/notifications' || apiPath === '/api/auth/notifications/test' || apiPath === '/api/auth/notifications/preview') {
+        res.setHeader('Cache-Control', 'no-store');
+      }
+      if (req.method === 'GET' && apiPath === '/api/auth/notifications') {
+        const raw = await store.getNotificationSettings(user.username);
+        const prefs = raw
+          ? maskUserNotificationPreferences(parseUserNotificationPreferences(JSON.parse(raw)))
+          : defaultUserNotificationPreferences();
+        const emailInfo = await store.accountEmail(user.username);
+        const protection = await store.getLedgerProtection(user.username);
+        const deliveries = (await store.listNotificationDeliveries(user.username, 15)).map((row) => ({
+          id: row.id,
+          eventKey: row.eventKey,
+          kind: row.kind,
+          periodKey: row.periodKey,
+          status: row.status,
+          channels: JSON.parse(row.channelsJson) as unknown[],
+          summary: row.summary,
+          createdAt: row.createdAt,
+        }));
+        return send(res, 200, {
+          preferences: prefs,
+          emailAvailable: accountEmailAvailable(),
+          emailVerified: Boolean(emailInfo.email && emailInfo.verifiedAt),
+          email: emailInfo.email ?? null,
+          custodyManaged: Boolean(protection?.mode === 'managed' && protection.sealedSecret),
+          recentDeliveries: deliveries,
+        });
+      }
+      if (req.method === 'PUT' && apiPath === '/api/auth/notifications') {
+        const body = await readBody(req, 32 * 1024);
+        const existingRaw = await store.getNotificationSettings(user.username);
+        const existing = existingRaw ? parseUserNotificationPreferences(JSON.parse(existingRaw)) : undefined;
+        let next;
+        try {
+          next = mergeUserNotificationSecrets(parseUserNotificationPreferences(body), existing);
+        } catch (error) {
+          return send(res, 400, { code: 'INVALID_NOTIFICATION_SETTINGS', error: error instanceof Error ? error.message : String(error) });
+        }
+        await store.saveNotificationSettings(user.username, JSON.stringify(next));
+        await log('info', 'account_notifications_updated', 'Account notification settings updated', { username: user.username });
+        const emailInfo = await store.accountEmail(user.username);
+        const protection = await store.getLedgerProtection(user.username);
+        return send(res, 200, {
+          preferences: maskUserNotificationPreferences(next),
+          emailAvailable: accountEmailAvailable(),
+          emailVerified: Boolean(emailInfo.email && emailInfo.verifiedAt),
+          email: emailInfo.email ?? null,
+          custodyManaged: Boolean(protection?.mode === 'managed' && protection.sealedSecret),
+        });
+      }
+      if (req.method === 'POST' && apiPath === '/api/auth/notifications/preview') {
+        const body = await readBody(req, 4096);
+        const kind = typeof body.kind === 'string' ? body.kind : 'monthly';
+        if (!USER_NOTIFICATION_KINDS.includes(kind as UserNotificationKind)) {
+          return send(res, 400, { code: 'INVALID_NOTIFICATION_KIND', error: '预览类型无效' });
+        }
+        try {
+          const preview = await previewUserNotification(userReportDeps, user.username, kind as UserNotificationKind);
+          return send(res, 200, preview);
+        } catch (error) {
+          if (error instanceof ServerStoreError) {
+            return send(res, error.status, { code: error.code, error: error.message });
+          }
+          return send(res, 500, { code: 'NOTIFICATION_PREVIEW_FAILED', error: error instanceof Error ? error.message : String(error) });
+        }
+      }
+      if (req.method === 'POST' && apiPath === '/api/auth/notifications/test') {
+        const body = await readBody(req, 4096);
+        const kind = typeof body.kind === 'string' ? body.kind : 'monthly';
+        if (!USER_NOTIFICATION_KINDS.includes(kind as UserNotificationKind)) {
+          return send(res, 400, { code: 'INVALID_NOTIFICATION_KIND', error: '测试类型无效' });
+        }
+        try {
+          const result = await sendTestUserNotification(userReportDeps, user.username, kind as UserNotificationKind);
+          await log('info', 'account_notifications_tested', 'Account notification test sent', {
+            username: user.username,
+            detail: { kind, status: result.status },
+          });
+          return send(res, 200, result);
+        } catch (error) {
+          if (error instanceof ServerStoreError) {
+            return send(res, error.status, { code: error.code, error: error.message });
+          }
+          return send(res, 500, { code: 'NOTIFICATION_TEST_FAILED', error: error instanceof Error ? error.message : String(error) });
+        }
+      }
       if (isAdmin) {
         const context = logRequestContext.getStore();
         if (context) { context.actorId = user.accountId; context.role = auth.role; }
@@ -3131,6 +3260,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     ready,
     started,
     flushAccountEmails: async () => { processAccountEmails(); await accountEmailFlight; },
+    flushUserNotifications: async () => { await ready; return runUserNotifications(); },
     flushNodeReplication: async () => { await ready; await nodeReplication.drain(); await nodeReplication.run(); await nodeReplication.drain(); },
     flushGroupReplication: async () => { await ready; await groupReconciler.run(); },
     flushOpenSnapshots: async () => { await ready; await openSnapshots.warm(); await openSnapshots.drain(); },
@@ -3144,6 +3274,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       groupReconciler.stop();
       clearInterval(queueWatchdog);
       clearInterval(accountEmailTimer);
+      clearInterval(userNotificationsTimer);
       clearInterval(nodeReplicationTimer);
       clearInterval(snapshotTimer);
       await openSnapshots.close();

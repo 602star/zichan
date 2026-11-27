@@ -87,7 +87,7 @@ export function AccountActions({ client, target, canManage, canEditQuota, onDone
           <div>目标账号：{target.username}（<code>{target.accountId}</code>）</div>
           <p style={muted}>根据当前数据，将影响 {target.activeDeviceCount} 个有效会话。执行时会撤销该账号的全部可管理会话；用户需要重新登录，账号与数据保留。实际数量可能随用户登录或退出变化。</p>
           <div style={row}>
-            <Button disabled={busy || !canManage} onClick={() => { void submit('/sessions/revoke', {}); }}>{busy ? '正在撤销…' : '确认撤销'}</Button>
+            <Button variant="danger" disabled={busy || !canManage} onClick={() => { void submit('/sessions/revoke', {}); }}>{busy ? '正在撤销…' : '确认撤销'}</Button>
             <Button disabled={busy} onClick={() => setMode('')}>取消</Button>
           </div>
         </section>
@@ -103,7 +103,7 @@ export function AccountActions({ client, target, canManage, canEditQuota, onDone
           </p>
           <Field label="原因（会写入审计）"><TextInput value={reason} maxLength={200} onChange={(event) => setReason(event.target.value)} /></Field>
           <div style={row}>
-            <Button disabled={busy} onClick={() => { void submit('/state', { disabled: !target.disabled }); }}>确认{target.disabled ? '启用' : '禁用'}</Button>
+            <Button variant={target.disabled ? 'primary' : 'danger'} disabled={busy} onClick={() => { void submit('/state', { disabled: !target.disabled }); }}>确认{target.disabled ? '启用' : '禁用'}</Button>
             <Button onClick={() => setMode('')}>取消</Button>
           </div>
         </div>
@@ -120,7 +120,7 @@ export function AccountActions({ client, target, canManage, canEditQuota, onDone
           <p style={muted}>输入纯数字，范围 0.0009765625–1024 GiB，最多 30 位小数，按最近的整数字节保存。</p>
           <Field label="原因（会写入审计）"><TextInput value={reason} maxLength={200} onChange={(event) => setReason(event.target.value)} /></Field>
           <div style={row}>
-            <Button disabled={busy} onClick={() => saveQuota('commits', commitGiB)}>保存</Button>
+            <Button variant="primary" disabled={busy} onClick={() => saveQuota('commits', commitGiB)}>保存</Button>
             <Button disabled={busy} onClick={() => { void submit('/commits', { commitQuotaBytes: null }); }}>恢复服务器默认</Button>
             <Button onClick={() => setMode('')}>取消</Button>
           </div>
@@ -136,7 +136,7 @@ export function AccountActions({ client, target, canManage, canEditQuota, onDone
           <p style={muted}>输入纯数字，范围 0.0009765625–1024 GiB，最多 30 位小数，按最近的整数字节保存。</p>
           <Field label="原因（会写入审计）"><TextInput value={reason} maxLength={200} onChange={(event) => setReason(event.target.value)} /></Field>
           <div style={row}>
-            <Button disabled={busy} onClick={() => saveQuota('blobs', blobGiB)}>保存</Button>
+            <Button variant="primary" disabled={busy} onClick={() => saveQuota('blobs', blobGiB)}>保存</Button>
             <Button disabled={busy} onClick={() => { void submit('/blobs', { quotaBytes: null }); }}>恢复服务器默认</Button>
             <Button onClick={() => setMode('')}>取消</Button>
           </div>
@@ -156,7 +156,7 @@ export function AccountActions({ client, target, canManage, canEditQuota, onDone
           </Field>
           <Field label="原因（会写入审计）"><TextInput value={reason} maxLength={200} onChange={(event) => setReason(event.target.value)} /></Field>
           <div style={row}>
-            <Button disabled={busy} onClick={() => { void submit('/role', { role }); }}>保存</Button>
+            <Button variant="primary" disabled={busy} onClick={() => { void submit('/role', { role }); }}>保存</Button>
             <Button onClick={() => setMode('')}>取消</Button>
           </div>
         </div>

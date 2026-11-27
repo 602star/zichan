@@ -112,7 +112,7 @@ export function AccountFilter({ client, accountId, username, onApply }: {
     : Promise.resolve({ users: [] }), [debounced]);
 
   return (
-    <Field label="账号（用户名或完整 accountId）">
+    <Field label="账号（用户名或完整账号 ID）">
       <div style={row}>
         <TextInput value={term} placeholder="输入用户名或 account-… 搜索"
           onChange={(event) => { setTerm(event.target.value); setOpen(true); }} onFocus={() => setOpen(true)} />

@@ -111,7 +111,7 @@
   .zc-home-calendar.is-condensed.is-view-month .zc-home-calendar-dayhead { line-height: 20px; }
   .zc-home-calendar.is-condensed.is-view-month .zc-home-calendar-weekday { padding-block: var(--sp-1); }
   .zc-home-calendar.is-condensed.is-view-month .zc-home-calendar-subdate { max-width: 65%; line-height: 16px; }
-  .zc-home-calendar.is-condensed.is-view-month .zc-home-calendar-mobile-mark { position: absolute; right: var(--sp-1); bottom: var(--sp-1); font-size: 11px; }
+  .zc-home-calendar.is-condensed.is-view-month .zc-home-calendar-mobile-mark { position: absolute; right: var(--sp-1); bottom: var(--sp-1); font-size: var(--fs-meta); }
 }
 @container home-calendar (min-width: 900px) {
   .zc-home-calendar.is-condensed .zc-home-calendar-year { grid-template-columns: repeat(4, minmax(0, 1fr)); }
@@ -128,10 +128,10 @@
   .zc-home-calendar-day, .zc-home-calendar-blank { min-height: 76px; }
   .zc-home-calendar-day { padding: 5px 3px; }
   .zc-home-calendar-dayhead { width: 100%; }
-  .zc-home-calendar-holiday { font-size: 11px; }
-  .zc-home-calendar-subdate { font-size: 11px; }
+  .zc-home-calendar-holiday { font-size: var(--fs-meta); }
+  .zc-home-calendar-subdate { font-size: var(--fs-meta); }
   .zc-home-calendar-day :is(.zc-home-calendar-cash, .zc-home-calendar-cell-event, .zc-home-calendar-more) { display: none; }
-  .zc-home-calendar-mobile-mark { display: block; font-size: 11px; color: var(--text-secondary); }
+  .zc-home-calendar-mobile-mark { display: block; font-size: var(--fs-meta); color: var(--text-secondary); }
   .zc-home-calendar-year { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-3); }
   .zc-home-calendar-grid.is-mini :is(.zc-home-calendar-day, .zc-home-calendar-blank) { min-height: 34px; padding: 2px; }
   .zc-home-calendar-week { grid-template-columns: minmax(0, 1fr); }

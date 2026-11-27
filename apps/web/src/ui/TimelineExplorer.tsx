@@ -1,5 +1,6 @@
 import { addDays, addMonths, localToday } from '@zichan/core';
 import type { CSSProperties, ReactNode } from 'react';
+import { CalendarDatePicker } from './CalendarDatePicker.js';
 import { iconBtn } from './styles.js';
 import type { TimelineViewMode } from './DateRangeBar.js';
 
@@ -89,7 +90,7 @@ export function TimelineExplorer<T>(props: {
     return (
       <div style={stack}>
         <Navigator label="日期" onPrevious={() => onFocusDate(addDays(focusDate, -1))} onNext={() => onFocusDate(addDays(focusDate, 1))}>
-          <input aria-label="选择日期" className="zc-input" type="date" value={focusDate} onChange={(event) => onFocusDate(event.target.value)} style={{ width: 160 }} />
+          <div style={{ width: 168 }}><CalendarDatePicker label="选择日期" value={focusDate} onChange={onFocusDate} /></div>
           <span style={countText}>{rows.length} 条</span>
         </Navigator>
         <EntryList rows={rows} keyOf={keyOf} renderEntry={renderEntry} onOpen={onOpen} emptyText={emptyText} />

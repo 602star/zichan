@@ -170,7 +170,7 @@ export function FirstRunWizard({ store, onInitialized }: FirstRunWizardProps) {
   }
 
   return (
-    <main className="zc-auth-page" style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(22px, 5vw, 64px)', boxSizing: 'border-box', background: 'var(--bg)', color: 'var(--text-primary)', fontFamily: 'system-ui, sans-serif' }}>
+    <main className="zc-auth-page" style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(22px, 5vw, 64px)', boxSizing: 'border-box', background: 'var(--bg)', color: 'var(--text-primary)' }}>
       <section style={{ width: 'min(920px, 100%)', margin: '0 auto' }}>
         <h1 className="zc-first-run-title" style={{ margin: '10px 0' }}>你希望怎样开始记账？</h1>
         <p>先决定要不要分开记录银行卡、微信和支付宝。以后随时可以添加账户。</p>

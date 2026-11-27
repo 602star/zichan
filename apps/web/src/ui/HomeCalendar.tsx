@@ -16,6 +16,7 @@ import { accountLocalStorage } from '../account-storage.js';
 import { CalendarDatePicker } from './CalendarDatePicker.js';
 import { CalendarEntryEditor } from './CalendarEntryEditor.js';
 import { Card, CardEmpty } from './Card.js';
+import { ConfirmDialog } from './ConfirmDialog.js';
 import { DialogShell } from './DialogShell.js';
 import './home-calendar.css';
 
@@ -57,6 +58,7 @@ export function HomeCalendar({ snap, today }: { snap: Snapshot; today: string })
   const [showCompleted, setShowCompleted] = useState(true);
   const [editor, setEditor] = useState<{ entry: CalendarEntry; replace?: { entryId: string; date: string; version: number } } | null>(null);
   const [detail, setDetail] = useState<HomeCalendarItem | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<HomeCalendarItem | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
@@ -214,7 +216,25 @@ export function HomeCalendar({ snap, today }: { snap: Snapshot; today: string })
       <dl className="zc-calendar-detail-facts"><div><dt>日期</dt><dd>{detail.date}{detail.endDate !== detail.date ? ` 至 ${detail.endDate}` : ''}</dd></div><div><dt>时间</dt><dd><Clock3 size={16} aria-hidden="true" />{detail.occurrence.entry.allDay ? '全天' : `${detail.occurrence.entry.startTime} — ${detail.occurrence.entry.endTime}`} · {detail.occurrence.entry.timezone}</dd></div><div><dt>类型</dt><dd>{CALENDAR_KIND_LABELS[detail.occurrence.entry.kind]} · {detail.occurrence.entry.calendar === 'lunar' ? `农历 ${detail.occurrence.entry.lunarMonth} 月 ${detail.occurrence.entry.lunarDay} 日` : '公历'} · {CALENDAR_REPEAT_LABELS[detail.occurrence.entry.repeat]}</dd></div>{detail.occurrence.entry.birthYear && <div><dt>年龄</dt><dd>{(detail.occurrence.entry.calendar === 'lunar' ? calendarDayInfo(detail.date).lunarYear! : Number(detail.date.slice(0, 4))) - detail.occurrence.entry.birthYear} 岁</dd></div>}{detail.occurrence.entry.location && <div><dt><MapPin size={16} />地点</dt><dd>{detail.occurrence.entry.location}</dd></div>}</dl>
       {detail.occurrence.entry.description && <p className="zc-calendar-description">{detail.occurrence.entry.description}</p>}
       {!!detail.occurrence.entry.transactionIds?.length && <CalendarTransactionLinks ids={detail.occurrence.entry.transactionIds} />}
-      {!preview && <div className="zc-calendar-detail-actions"><button type="button" className="zc-btn zc-btn--primary" disabled={busy} onClick={() => void run(async () => { await setCalendarOccurrenceStatus(store, detail.occurrence!.entry.id, detail.date, detail.completed ? 'open' : 'completed'); setDetail(null); setNotice(detail.completed ? '已恢复为未完成。' : '本次事项已完成，未生成收支流水。'); })}>{detail.completed ? '恢复未完成' : '完成本次'}</button><button type="button" className="zc-btn" disabled={busy} onClick={() => edit(detail, false)}>编辑整个事项</button>{detail.occurrence.entry.repeat !== 'none' && <button type="button" className="zc-btn" disabled={busy} onClick={() => edit(detail, true)}>仅编辑本次</button>}<button type="button" className="zc-btn" disabled={busy} onClick={() => void run(async () => { await setCalendarOccurrenceStatus(store, detail.occurrence!.entry.id, detail.date, 'open', new Date(Date.now() + 10 * 60_000).toISOString()); setDetail(null); setNotice('已设置 10 分钟后再提醒，应用需保持打开且已开启系统提醒。'); })}>10 分钟后再提醒</button>{detail.occurrence.entry.repeat !== 'none' && <button type="button" className="zc-btn" disabled={busy} onClick={() => void run(async () => { await setCalendarOccurrenceStatus(store, detail.occurrence!.entry.id, detail.date, 'skipped'); setDetail(null); })}>跳过本次</button>}<button type="button" className="zc-btn" disabled={busy} onClick={() => { if (window.confirm(`删除“${detail.title}”及其后续重复？`)) void run(async () => { await store.calendarEntries.remove(detail.occurrence!.entry.id, detail.occurrence!.entry.version); setDetail(null); setNotice('日历事项已删除。'); }); }}>删除整个事项</button></div>}
+      {!preview && <div className="zc-calendar-detail-actions"><button type="button" className="zc-btn zc-btn--primary" disabled={busy} onClick={() => void run(async () => { await setCalendarOccurrenceStatus(store, detail.occurrence!.entry.id, detail.date, detail.completed ? 'open' : 'completed'); setDetail(null); setNotice(detail.completed ? '已恢复为未完成。' : '本次事项已完成，未生成收支流水。'); })}>{detail.completed ? '恢复未完成' : '完成本次'}</button><button type="button" className="zc-btn" disabled={busy} onClick={() => edit(detail, false)}>编辑整个事项</button>{detail.occurrence.entry.repeat !== 'none' && <button type="button" className="zc-btn" disabled={busy} onClick={() => edit(detail, true)}>仅编辑本次</button>}<button type="button" className="zc-btn" disabled={busy} onClick={() => void run(async () => { await setCalendarOccurrenceStatus(store, detail.occurrence!.entry.id, detail.date, 'open', new Date(Date.now() + 10 * 60_000).toISOString()); setDetail(null); setNotice('已设置 10 分钟后再提醒，应用需保持打开且已开启系统提醒。'); })}>10 分钟后再提醒</button>{detail.occurrence.entry.repeat !== 'none' && <button type="button" className="zc-btn" disabled={busy} onClick={() => void run(async () => { await setCalendarOccurrenceStatus(store, detail.occurrence!.entry.id, detail.date, 'skipped'); setDetail(null); })}>跳过本次</button>}<button type="button" className="zc-btn zc-btn--danger" disabled={busy} onClick={() => setConfirmDelete(detail)}>删除整个事项</button></div>}
     </DialogShell>}
+    {confirmDelete?.occurrence && (
+      <ConfirmDialog
+        title="删除日历事项"
+        confirmLabel="确认删除"
+        cancelLabel="取消"
+        tone="danger"
+        busy={busy}
+        onCancel={() => setConfirmDelete(null)}
+        onConfirm={async () => {
+          await store.calendarEntries.remove(confirmDelete.occurrence!.entry.id, confirmDelete.occurrence!.entry.version);
+          setConfirmDelete(null);
+          setDetail(null);
+          setNotice('日历事项已删除。');
+        }}
+      >
+        删除“{confirmDelete.title}”及其后续重复？
+      </ConfirmDialog>
+    )}
   </Card>;
 }

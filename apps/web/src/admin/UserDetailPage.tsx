@@ -26,12 +26,6 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
     return (
       <>
         <h2>用户详情</h2>
-        <PanelIndex sections={[
-          { id: sectionId('账号信息'), label: '账号信息' },
-          { id: sectionId('设备与会话'), label: '设备与会话' },
-          { id: sectionId('同步情况'), label: '同步情况' },
-          { id: sectionId('操作记录'), label: '操作记录' },
-        ]} />
         <Loading loading={false} error={detail.error} />
         <Button onClick={() => navigate('/users')}>返回用户列表</Button>
       </>
@@ -67,12 +61,16 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
         </>
       } />
       <Loading loading={detail.loading} error={detail.error} stale={detail.stale} loadedAt={detail.loadedAt} />
+      <PanelIndex sections={[
+        { id: sectionId('用户支持摘要'), label: '支持摘要' },
+        { id: sectionId('处理该用户'), label: '处理该用户' },
+        { id: sectionId('账号信息'), label: '账号信息' },
+        { id: sectionId('设备与会话'), label: '设备与会话' },
+        { id: sectionId('同步情况'), label: '同步情况' },
+        { id: sectionId('操作记录'), label: '操作记录' },
+      ]} />
 
       <div className="zc-admin-user-workspace">
-      <Panel title="处理该用户">
-        <AccountActions client={client} target={target} canManage={canManage} canEditQuota={canEditQuota} onDone={reload} />
-        {canManage ? <div style={{ marginTop: 12 }}><PasswordResetIssuer client={client} accountId={account.accountId} username={account.username} onDone={reload} /></div> : null}
-      </Panel>
       <Panel title="用户支持摘要" note="先核对账号与最近请求，再查看相关记录。没有同步记录或长期离线，不等于同步失败。">
         <div className="zc-admin-grid">
           <Stat label="账号访问" value={account.disabled ? '已停用' : '已启用'} tone={account.disabled ? 'warn' : undefined} hint="设备登录是否有效，请查看设备与会话" />
@@ -82,6 +80,10 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
           <Stat label="记账预览" value={account.protection?.mode === 'managed' && capacity.ledgerId ? '托管账本' : '暂不具备条件'} hint={support.preview} />
         </div>
         {support.latest?.outcome === 'error' ? <Notice tone="warn">下一步：{SYNC_CATEGORIES.find((entry) => entry.value === support.latest?.category)?.next ?? '打开该账号的同步诊断，核对失败原因与后续请求。'}</Notice> : null}
+      </Panel>
+      <Panel title="处理该用户">
+        <AccountActions client={client} target={target} canManage={canManage} canEditQuota={canEditQuota} onDone={reload} />
+        {canManage ? <div style={{ marginTop: 12 }}><PasswordResetIssuer client={client} accountId={account.accountId} username={account.username} onDone={reload} /></div> : null}
       </Panel>
 
       {/*
@@ -101,7 +103,7 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
 
       <Panel title="账号信息">
         <div className="zc-admin-grid zc-admin-detail-stats">
-          <Stat label="accountId" value={<span style={row}><code style={{ fontSize: 'var(--fs-sm)' }}>{account.accountId}</code><CopyValue value={account.accountId} /></span>} />
+          <Stat label="账号 ID" value={<span style={row}><code style={{ fontSize: 'var(--fs-sm)' }}>{account.accountId}</code><CopyValue value={account.accountId} /></span>} />
           <Stat label="登录账号" value={account.username} />
           <Stat label="昵称" value={account.displayName || '未设置'} />
           <Stat label="绑定邮箱" value={account.email || '未绑定'} hint={account.emailVerifiedAt ? `验证于 ${when(account.emailVerifiedAt)}` : account.email ? '未验证，可用于密码登录；不能用于邮件找回或提醒' : '由用户在“我的账号”绑定'} />

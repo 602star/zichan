@@ -1473,7 +1473,17 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 {!compactView && reopenGuideControl}
                 <button onClick={openNewTransaction} className="zc-header-primary zc-btn zc-btn--primary">{usesAccounts ? '+ 记账' : '+ 记支出'}</button>
-                <details className="zc-ledger-more">
+                <details className="zc-ledger-more" onKeyDown={(event) => {
+                  if (event.key === 'Escape' && event.currentTarget.open) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    event.currentTarget.open = false;
+                  }
+                }} onBlur={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                    event.currentTarget.open = false;
+                  }
+                }}>
                   <summary className="zc-btn">更多操作</summary>
                   <div className="zc-ledger-more-panel">
                     <button onClick={() => setShowVoided((value) => !value)} className="zc-menu-item">作废记录 {voidedPage?.totalCount ?? 0}</button>
@@ -1530,7 +1540,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
                   onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))}
                 />
                 <button type="button" className="zc-transaction-filter-toggle zc-btn" aria-expanded={mobileFiltersOpen} aria-controls="transaction-filter-panel" onClick={() => setMobileFiltersOpen((open) => !open)}>
-                  {activeFilterCount > 0 ? `筛选 · ${activeFilterCount} 项` : '筛选'} <span aria-hidden="true">{mobileFiltersOpen ? '收起' : '展开'} ▾</span>
+                  {mobileFiltersOpen ? (activeFilterCount > 0 ? `收起筛选（${activeFilterCount}）` : '收起筛选') : (activeFilterCount > 0 ? `筛选（${activeFilterCount}）` : '筛选')} <span aria-hidden="true">{mobileFiltersOpen ? '▴' : '▾'}</span>
                 </button>
               </div>
             )}
@@ -1624,8 +1634,12 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
                 emptyText="该时间范围内没有日常流水。"
               />
             )}
+            <div className="zc-transaction-load-status" role="status">
+              {transactionPageBusy ? '正在加载当前范围全部流水…' : `已加载当前范围全部 ${readyTransactionRead.page.transactions.length} 笔`}
+            </div>
             {activeTemplates.length > 0 && (
               <div className="zc-transaction-template-rail" aria-label="常用记账模板">
+                <span className="zc-caption" style={{ alignSelf: 'center', marginRight: 4 }}>快速记一笔：</span>
                 {activeTemplates.slice(0, 10).map((tpl) => (
                   <button key={tpl.id} onClick={() => createFromTemplate(tpl)} className={buttonCls}>
                     {tpl.name}{tpl.amount ? ` · ${tpl.amount}` : ''}
@@ -1633,9 +1647,6 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
                 ))}
               </div>
             )}
-            <div className="zc-transaction-load-status" role="status">
-              {transactionPageBusy ? '正在加载当前范围全部流水…' : `已加载当前范围全部 ${readyTransactionRead.page.transactions.length} 笔`}
-            </div>
             {transactionReadError && <div role="alert" className="zc-alert is-danger">{transactionReadError}</div>}
           </section>
           {/*
@@ -2232,7 +2243,7 @@ function SavedViews(props: {
                 ) : (
                   <>
                     <button onClick={() => props.onApply(view)} className="zc-btn zc-btn--ghost">{view.name}</button>
-                    <button onClick={() => props.onTogglePin(view)} title={view.isPinned ? '取消置顶' : '置顶'} className="zc-btn zc-btn--sm">{view.isPinned ? '★' : '☆'}</button>
+                    <button type="button" onClick={() => props.onTogglePin(view)} aria-label={view.isPinned ? `取消置顶 ${view.name}` : `置顶 ${view.name}`} aria-pressed={view.isPinned} title={view.isPinned ? '取消置顶' : '置顶'} className="zc-btn zc-btn--sm">{view.isPinned ? '★' : '☆'}</button>
                     <button
                       onClick={() => {
                         setEditingId(view.id);
@@ -2585,7 +2596,7 @@ function TransactionList({ vm, revealMatches, initialDetailId, onEdit, onRefund,
   const closePanel = () => setPanel(null);
   const expandedDay = (group: typeof vm.groups[number]) => (
     Boolean(panel && group.items.some((item) => item.tx.id === panel.id))
-      || (dayOverrides[group.key] ?? (dayMode === 'all' || (dayMode === 'recent' && isRecentTransactionDay(group.key, today))))
+      || (dayOverrides[group.key] ?? (dayMode === 'all' || (dayMode === 'recent' && ((vm.groups.length <= 2 && vm.count <= 10) || isRecentTransactionDay(group.key, today)))))
   );
   const setAllDays = (mode: 'all' | 'none') => { setPanel(null); setDayOverrides({}); setDayMode(mode); };
   const columns = () => <>
@@ -2619,7 +2630,7 @@ function TransactionList({ vm, revealMatches, initialDetailId, onEdit, onRefund,
             <button type="button" className="zc-btn zc-btn--sm" disabled={vm.groups.every((group) => !expandedDay(group))} onClick={() => setAllDays('none')}>全部折叠</button>
           </div>
         </div>
-        <table className="zc-transaction-table zc-transaction-columns" aria-hidden="true">{columns()}</table>
+        {vm.groups.some(expandedDay) && <table className="zc-transaction-table zc-transaction-columns" aria-hidden="true">{columns()}</table>}
       </>}
       {vm.groups.length === 0 && <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-body)', padding: '20px 0' }}>暂无流水</div>}
       {vm.groups.map((g) => {
@@ -2699,6 +2710,8 @@ function TransactionList({ vm, revealMatches, initialDetailId, onEdit, onRefund,
                   key={tx.id}
                   {...gestures.bind(tx.id)}
                   data-gesture-direction={gestures.preview?.id === tx.id ? gestures.preview.direction : undefined}
+                  role="button"
+                  aria-expanded={!compact ? panel?.id === tx.id : undefined}
                   tabIndex={0}
                   onKeyDown={(event) => {
                     if (event.target !== event.currentTarget) return;
@@ -2776,8 +2789,8 @@ function TransactionList({ vm, revealMatches, initialDetailId, onEdit, onRefund,
                       <CardFact label="分类" value={item.categoryLabel} />
                       {usesAccounts && <CardFact label="账户" value={item.accountName} />}
                       <CardFact label="状态" value={item.statusLabel} />
-                      {(tx.orderNumber || tx.trackingNumber) && <p>订单号：{tx.orderNumber || '—'} · 物流单号：{tx.trackingNumber || '—'}</p>}
-                      {(tx.invoiceNumber || tx.invoiceCode || tx.invoiceDate) && <p>发票号码：{tx.invoiceNumber || '—'} · 发票代码：{tx.invoiceCode || '—'} · 开票日期：{tx.invoiceDate || '—'}</p>}
+                      {(tx.orderNumber || tx.trackingNumber) && <CardFact label="订单与物流" value={`${tx.orderNumber || '—'} · ${tx.trackingNumber || '—'}`} />}
+                      {(tx.invoiceNumber || tx.invoiceCode || tx.invoiceDate) && <CardFact label="发票信息" value={`${tx.invoiceNumber || '—'} · ${tx.invoiceCode || '—'} · ${tx.invoiceDate || '—'}`} />}
                       {item.payeeName && <CardFact label="交易对象" value={item.payeeName} />}
                       {tags.length > 0 && <CardFact label="标签" value={tags.join(' / ')} />}
                       {files > 0 && <CardFact label="附件" value={`${files} 个 · 编辑流水可查看凭证`} />}
@@ -3202,7 +3215,7 @@ function ExpenseCompositionCard(props: {
     ...rows.map((slice, index) => ({
       key: slice.category,
       label: slice.label,
-      amountText: money(slice.amount),
+      amountText: D(slice.amount).eq(0) ? `${money(slice.amount)} · 退款抵消` : money(slice.amount),
       weight: slice.weight,
       color: CATEGORY_COLORS[index % CATEGORY_COLORS.length] ?? OTHER_CATEGORY_COLOR,
       onSelect: onSelect ? () => onSelect(slice.category) : undefined,
@@ -3239,7 +3252,7 @@ function ExpenseCompositionCard(props: {
           testId="composition-parent"
           slices={chartSlices(composition.slices, composition.others, onSelectParent)}
         />
-        {parent && children && (
+        {parent && children ? (
           <CompositionDonut
             ariaLabel={`${parentLabel} 的二级构成`}
             totalText={money(children.total)}
@@ -3249,7 +3262,12 @@ function ExpenseCompositionCard(props: {
             testId="composition-children"
             slices={chartSlices(children.slices, children.others, (category) => onSelectChild(parent, category))}
           />
-        )}
+        ) : composition.slices.length > 0 ? (
+          <div className="zc-chart-drill-placeholder">
+            <strong>二级分类细分</strong>
+            <span>点击左侧任一板块，在此查看该板块的二级分类占比与明细。</span>
+          </div>
+        ) : null}
       </div>
     </div>
   );

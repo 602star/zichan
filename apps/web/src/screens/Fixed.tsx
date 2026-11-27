@@ -72,7 +72,6 @@ import {
 } from '../forms.js';
 import { buildFixed, type FixedCardVM, type FixedTimelineVM } from '../selectors/fixed.js';
 import { ledgerAsOfDate } from '../as-of.js';
-import { pillBtn } from '../ui/styles.js';
 import { DateRangeBar, dateRangeValue, type DateRangeValue, type TimelineViewMode } from '../ui/DateRangeBar.js';
 import { TimelineExplorer } from '../ui/TimelineExplorer.js';
 import { useUndo } from '../ui/UndoToast.js';
@@ -326,7 +325,7 @@ export function Fixed({ navigationKey = 'fixed' }: { navigationKey?: string } = 
             const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = attachment.fileName; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 10000);
           })().catch((reason) => setNotice(reason instanceof Error ? reason.message : String(reason))); }} /> : <>
       <div className="zc-fixed-page-modes" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        {(['overview', 'list', 'year', 'month', 'day'] as const).map((mode) => <button key={mode} onClick={() => setView(mode)} style={pillBtn(view === mode)}>{mode === 'overview' ? '概览' : mode === 'list' ? '时间线' : mode === 'year' ? '年度' : mode === 'month' ? '月历' : '单日'}</button>)}
+        {(['overview', 'list', 'year', 'month', 'day'] as const).map((mode) => <button key={mode} type="button" aria-pressed={view === mode} onClick={() => setView(mode)} className={`zc-btn${view === mode ? ' zc-btn--primary' : ''}`}>{mode === 'overview' ? '概览' : mode === 'list' ? '时间线' : mode === 'year' ? '年度' : mode === 'month' ? '月历' : '单日'}</button>)}
         <div style={{ flex: 1 }} />
         {view !== 'overview' && <button onClick={() => setAssetModal('new')} className="zc-btn zc-btn--primary">+ 新增物品</button>}
       </div>

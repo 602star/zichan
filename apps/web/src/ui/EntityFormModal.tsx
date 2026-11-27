@@ -731,9 +731,9 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
             {!draftReady && <span role="status" style={{ alignSelf: 'center', color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}>
               正在加载草稿…
             </span>}
-            <button onClick={requestClose} disabled={busy || iconBusy} style={{ padding: '9px 18px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)', cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.6 : 1 }}>取消</button>
+            <button type="button" className="zc-btn" onClick={requestClose} disabled={busy || iconBusy}>取消</button>
             {!compactView && onSaveContinue && <button type="button" className="zc-btn" disabled={busy || iconBusy || !draftReady || !!pendingDraft} onClick={() => void save(undefined, true)}>保存并继续</button>}
-            <button onClick={() => void save()} disabled={busy || iconBusy || !draftReady || !!pendingDraft} style={{ padding: '9px 18px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 'var(--fw-bold)', cursor: 'pointer', opacity: busy || !draftReady || !!pendingDraft ? 0.6 : 1 }}>
+            <button type="button" className="zc-btn zc-btn--primary" onClick={() => void save()} disabled={busy || iconBusy || !draftReady || !!pendingDraft}>
               {busy ? '保存中…' : '保存'}
             </button>
           </div>

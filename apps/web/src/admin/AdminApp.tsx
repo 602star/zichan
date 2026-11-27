@@ -232,7 +232,7 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
           ) : null}
         </div>
       </header>
-      {message && <p role="alert" style={{ padding: 14, background: 'var(--surface)', border: '1px solid var(--negative)', borderRadius: 'var(--r-sm)' }}>{message}</p>}
+      {message && <p role="alert" className="zc-admin-global-alert">{message}</p>}
       {account && clientRef.current
         ? <AdminShell client={clientRef.current} account={account} baseUrl={baseUrl} onSignedOut={signOutWithNote} />
         : <section style={{ maxWidth: 580, margin: '24px auto', padding: 24, borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
@@ -240,7 +240,7 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
           {!health && !busy && <p>请确认后端服务已启动。仅启动 5173 前端页面不能创建服务器账号。</p>}
           {!busy && message && <button onClick={() => { setPassword(''); setAttempt((value) => value + 1); }}>重新连接服务器</button>}
           {mfaChallenge
-            ? <form onSubmit={(event) => void submitMfa(event)} style={{ display: 'grid', gap: 16 }}>
+            ? <form className="zc-admin-auth-form" onSubmit={(event) => void submitMfa(event)} style={{ display: 'grid', gap: 16 }}>
               <p style={{ margin: 0 }}>两步验证已开启。挑战将在 {new Date(mfaChallenge.expiresAt).toLocaleTimeString()} 失效，超时后请重新输入账号密码。</p>
               <label>验证码或恢复码<input className="zc-input" aria-label="两步验证码" inputMode="numeric" autoComplete="one-time-code" maxLength={9} required value={mfaCode} disabled={busy} onChange={(event) => setMfaCode(event.target.value)} /></label>
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
@@ -249,7 +249,7 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
               </div>
               <p style={{ margin: 0 }}>恢复码每个只能使用一次；用它登录成功后，请在“账号安全”页重新生成。</p>
             </form>
-            : <form onSubmit={(event) => void submit(event)} style={{ display: 'grid', gap: 16 }}>
+            : <form className="zc-admin-auth-form" onSubmit={(event) => void submit(event)} style={{ display: 'grid', gap: 16 }}>
       <label>{health?.claimed ? '登录账号或邮箱' : '用户名'}<input className="zc-input" aria-label="管理账号用户名" autoComplete="username" autoCapitalize="none" spellCheck={false} required minLength={2} maxLength={health?.claimed ? 254 : 64} value={username} disabled={busy} onChange={(event) => setUsername(event.target.value)} />{!health?.claimed && <small>使用 2 至 64 个中文、字母、数字或 _ . -；不能使用邮箱地址。</small>}</label>
               <label>账号密码<input className="zc-input" aria-label="管理账号密码" type="password" autoComplete={health?.claimed ? 'current-password' : 'new-password'} required minLength={8} value={password} disabled={busy} onChange={(event) => setPassword(event.target.value)} /></label>
               {health && !health.claimed && <p>首次使用：设置管理员用户名和密码即可。创建成功后，此页面将只提供登录，不会创建个人账本。</p>}
@@ -372,7 +372,6 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
       {navOpen ? <button type="button" className="zc-admin-nav-scrim" aria-label="关闭管理导航" onClick={() => setNavOpen(false)} /> : null}
       <div className="zc-admin-nav-rail">
       <nav ref={navRef} tabIndex={-1} id="zc-admin-navigation" className="zc-admin-nav" data-open={navOpen} aria-label="管理后台导航">
-        <div className="zc-admin-nav-intro"><span>工作台</span><small>{baseUrl}</small></div>
         {groups.map((group) => {
           const link = (item: { path: string; label: string }) => {
           const Icon = navigationIcons[item.path];

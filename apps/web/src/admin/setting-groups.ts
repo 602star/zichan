@@ -7,6 +7,7 @@ export const SETTING_GROUPS = [
   { id: 'advanced', label: '高级阈值', description: '已有持续误报或明确的资源约束时再调整；通常保持默认值即可。' },
   { id: 'updates', label: '版本更新', description: '检查并安装签名、数据 schema 兼容的正式版本。' },
   { id: 'sync-group', label: '服务器同步组', description: '在主节点创建同步组，其他服务器各加入一次。组内账号、账本和附件由服务器自动传播。' },
+  { id: 'environment', label: '运行与环境', description: '查看当前服务版本、安全参数、密钥配置状态及运行环境（只读）。' },
 ] as const;
 
 export function settingGroup(name: string): string {

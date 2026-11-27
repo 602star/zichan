@@ -925,7 +925,7 @@ export function AddConversionModal({
                     const forcedAsset = fee.side === 'source' ? step.fromAssetId : fee.side === 'target' ? step.toAssetId : fee.assetId;
                     const suggestion = suggestFeeValue(normalized, forcedAsset, fee.amount, effectiveBookCurrencyId, snap.priceMarks, date);
                     return (
-                      <div className="zc-conversion-fee-grid" key={fee.id} data-fee-id={fee.id} style={{ display: 'grid', gridTemplateColumns: '170px 1fr 1fr 1fr 32px', gap: 8, alignItems: 'end', marginTop: 8 }}>
+                      <div className="zc-conversion-fee-grid" key={fee.id} data-fee-id={fee.id} style={{ display: 'grid', gridTemplateColumns: '170px 1fr 1fr 1fr 38px', gap: 8, alignItems: 'end', marginTop: 8 }}>
                         <Field label="扣费位置"><select aria-label="扣费位置" className="zc-select" value={fee.side} onChange={(event) => updateFee(stepIndex, fee.id, { side: event.target.value as FeeSide })}><option value="source">来源资产</option><option value="target">目标资产扣除</option><option value="third">第三资产另付</option></select></Field>
                         <Field label="手续费资产">{assetSelect('手续费资产', forcedAsset, (value) => updateFee(stepIndex, fee.id, { assetId: value }), true, fee.side !== 'third')}</Field>
                         <Field label="手续费数量"><input aria-label="手续费数量" className="zc-input" inputMode="decimal" value={fee.amount} onChange={(event) => updateFee(stepIndex, fee.id, { amount: event.target.value })} /></Field>

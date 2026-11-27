@@ -80,11 +80,11 @@ export function FixedInventory({ items, snap, preferences, onOpen, onNew, onFrom
   return <div className="zc-fixed-inventory">
     <div className="zc-fixed-toolbar zc-fixed-toolbar--head"><div><h2>物品清单</h2><p className="zc-caption">购入、使用、维护与处置，共用一份物品档案。</p></div><div className="zc-fixed-actions"><button type="button" className="zc-btn" onClick={onFromExpense}>从支出登记</button><button type="button" className="zc-btn zc-btn--primary" onClick={onNew}>+ 新增物品</button></div></div>
     {!showArchived && <div className="zc-card-band zc-fixed-summary">{[
-      ['整件物品', roots.length, () => update({ status: 'all', attentionOnly: false })],
-      ['使用中', roots.filter((item) => item.raw.status === 'active').length, () => update({ status: 'active', attentionOnly: false })],
-      ['闲置', roots.filter((item) => item.raw.status === 'stored').length, () => update({ status: 'stored', attentionOnly: false })],
-      ['待处理', roots.filter((item) => item.reminders.length || item.consumables.some((row) => row.needsAttention)).length, () => update({ attentionOnly: true, status: 'all' })],
-    ].map(([label, count, action]) => <button type="button" key={String(label)} onClick={action as () => void}><CardMetric label={String(label)} value={`${count} 件`} /></button>)}</div>}
+      ['整件物品', roots.length, filters.status === 'all' && !filters.attentionOnly, () => update({ status: 'all', attentionOnly: false })],
+      ['使用中', roots.filter((item) => item.raw.status === 'active').length, filters.status === 'active' && !filters.attentionOnly, () => update({ status: 'active', attentionOnly: false })],
+      ['闲置', roots.filter((item) => item.raw.status === 'stored').length, filters.status === 'stored' && !filters.attentionOnly, () => update({ status: 'stored', attentionOnly: false })],
+      ['待处理', roots.filter((item) => item.reminders.length || item.consumables.some((row) => row.needsAttention)).length, filters.attentionOnly, () => update({ attentionOnly: true, status: 'all' })],
+    ].map(([label, count, active, action]) => <button type="button" key={String(label)} aria-pressed={Boolean(active)} onClick={action as () => void}><CardMetric label={String(label)} value={`${count} 件`} /></button>)}</div>}
     <div className="zc-fixed-query"><label>查找物品<input className="zc-input" aria-label="搜索物品" placeholder="名称、品牌、型号、条码或位置" value={filters.query} onChange={(event) => update({ query: event.target.value })} /></label>
       <details className="zc-fixed-filter-details" open={!compact || showFilters} onToggle={(event) => { if (compact) setShowFilters(event.currentTarget.open); }}>
         <summary>筛选：分类、年份与位置{filters.year !== 'all' ? ` · ${filters.year} 年` : ''}{filters.locationId !== 'all' ? ` · ${filters.locationId === 'unset' ? '未设置位置' : fixedLocationPath(preferences.locations, filters.locationId)}` : ''}{filters.attentionOnly ? ' · 待处理' : ''}</summary>
@@ -126,7 +126,7 @@ function FixedInventoryRows({ item, parts, selected, onChoose, onOpen, action, u
   item: FixedCardVM; parts: FixedCardVM[]; selected: boolean; onChoose: () => void; onOpen: (item: FixedCardVM) => void;
   action: React.ReactNode; unitCost: React.ReactNode; purchase: string;
 }) {
-  return <><tr className="zc-fixed-inventory-row" data-fixed-item={item.id}><td><input type="checkbox" disabled={!!item.raw.archivedAt} aria-label={`选择 ${item.name}`} checked={selected} onChange={onChoose} /></td><td><button type="button" className="zc-workspace-link" onClick={() => onOpen(item)}>{item.name}</button><small>{item.categoryParent} / {item.category}</small><small>{purchase}</small></td>
+  return <><tr className="zc-fixed-inventory-row" data-fixed-item={item.id}><td><label className="zc-check-target"><input type="checkbox" disabled={!!item.raw.archivedAt} aria-label={`选择 ${item.name}`} checked={selected} onChange={onChoose} /></label></td><td><button type="button" className="zc-workspace-link" onClick={() => onOpen(item)}>{item.name}</button><small>{item.categoryParent} / {item.category}</small><small>{purchase}</small></td>
     <td data-label="累计净投入">{money(item.net, item.currencySymbol)}{item.installedComponents.length > 0 && <small>含已归属配件</small>}</td><td data-label="参考现值">{item.referenceValue !== undefined ? money(item.referenceValue, item.currencySymbol) : '未记录'}</td><td data-label="使用成本">{unitCost}</td><td data-label="状态与提醒">{item.status}{item.reminders.map((reminder) => <small className="zc-fixed-warning" key={reminder.id}>{reminder.label} · {reminder.days < 0 ? `逾期 ${-reminder.days} 天` : `剩 ${reminder.days} 天`}</small>)}{item.consumables.some((row) => row.needsAttention) && <small className="zc-fixed-warning">有耗材待处理</small>}</td><td>{action}</td></tr>
     {parts.map((part) => <tr className="zc-fixed-part-row" key={part.id}><td /><td><button type="button" className="zc-workspace-link" onClick={() => onOpen(part)}>配件：{part.name}</button></td><td colSpan={5}>费用已计入 {item.name}，不另行汇总。{part.installedIn ? ` 当前安装于 ${part.installedIn}` : ' 当前未安装'}</td></tr>)}</>;
 }

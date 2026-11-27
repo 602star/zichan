@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
   authenticateBiometric,
   biometricStatus,
@@ -6,6 +6,7 @@ import {
   recentlyAuthenticatedBiometric,
   type BiometricStatus,
 } from '../device-capabilities.js';
+import { DialogShell } from './DialogShell.js';
 
 export function shouldRelockApp(enabled: boolean, hiddenAt: number | null, visibleAt: number, thresholdMs = 1_000): boolean {
   return enabled && hiddenAt !== null && visibleAt - hiddenAt > thresholdMs;
@@ -42,6 +43,7 @@ export async function authenticateAppLock(
 }
 
 export function AppSecurityGate() {
+  const titleId = useId();
   const [enabled, setEnabled] = useState(() => readDevicePreferences().biometricLock);
   const [locked, setLocked] = useState(() => readDevicePreferences().biometricLock && !recentlyAuthenticatedBiometric());
   const [busy, setBusy] = useState(false);
@@ -114,23 +116,22 @@ export function AppSecurityGate() {
 
   if (!enabled || !locked) return null;
   return (
-    <div role="dialog" aria-modal="true" aria-label="应用已锁定" style={{
-      position: 'fixed', inset: 0, zIndex: 10000, display: 'grid', placeItems: 'center',
-      background: 'var(--bg)', color: 'var(--fg)', padding: 24, overflowY: 'auto', overflowWrap: 'anywhere',
-    }}>
-      <div style={{ width: 'min(380px, 100%)', textAlign: 'center' }}>
-        <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>有本</div>
-        <div style={{ marginTop: 10, color: 'var(--fg-muted)', fontSize: 'var(--fs-body)' }}>
-          {busy ? '正在等待设备验证…' : '应用已锁定'}
-        </div>
-        {error && <div style={{ marginTop: 12, color: 'var(--negative)', fontSize: 'var(--fs-caption)', overflowWrap: 'anywhere' }}>{error}</div>}
-        <button type="button" onClick={() => void unlock()} disabled={busy} style={{
-          marginTop: 18, height: 40, padding: '0 18px', border: 0, borderRadius: 'var(--r-sm)',
-          background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 'var(--fw-bold)', cursor: busy ? 'wait' : 'pointer',
-        }}>
-          {busy ? '验证中…' : '使用生物识别或设备密码解锁'}
-        </button>
+    <DialogShell
+      labelledBy={titleId}
+      closeOnEscape={false}
+      closeOnBackdrop={false}
+      dismissDisabled
+      backdropStyle={{ background: 'var(--bg)', zIndex: 10000 }}
+      panelStyle={{ width: 'min(380px, 100%)', textAlign: 'center', background: 'transparent', border: 0, boxShadow: 'none', padding: 24 }}
+    >
+      <div id={titleId} style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>有本</div>
+      <div style={{ marginTop: 10, color: 'var(--fg-muted)', fontSize: 'var(--fs-body)' }}>
+        {busy ? '正在等待设备验证…' : '应用已锁定'}
       </div>
-    </div>
+      {error && <div role="alert" style={{ marginTop: 12, color: 'var(--negative)', fontSize: 'var(--fs-caption)', overflowWrap: 'anywhere' }}>{error}</div>}
+      <button type="button" data-dialog-initial-focus className="zc-btn zc-btn--primary" onClick={() => void unlock()} disabled={busy} style={{ marginTop: 18 }}>
+        {busy ? '验证中…' : '使用生物识别或设备密码解锁'}
+      </button>
+    </DialogShell>
   );
 }

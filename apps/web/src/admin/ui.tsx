@@ -377,12 +377,12 @@ export function CopyValue({ value, label = '复制', copiedLabel = '已复制' }
   );
 }
 
-export function Button({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+export function Button({ children, variant = 'default', ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'default' | 'primary' | 'danger' }) {
   return (
     <button
       type="button"
       {...props}
-      className={['zc-admin-button', props.className].filter(Boolean).join(' ')}
+      className={['zc-admin-button', variant === 'primary' ? 'zc-admin-button--primary' : variant === 'danger' ? 'zc-admin-button--danger' : '', props.className].filter(Boolean).join(' ')}
     >{children}</button>
   );
 }
@@ -531,18 +531,34 @@ export function ColumnPicker({ columns, hidden, onToggle, onReset, label = '列�
   label?: string;
 }) {
   const optional = columns.filter((column) => column.optional);
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const close = (target: EventTarget | null) => {
+      const node = detailsRef.current;
+      if (!node?.open) return;
+      if (!target || !(target instanceof Node) || !node.contains(target)) node.removeAttribute('open');
+    };
+    const onMouseDown = (event: MouseEvent) => close(event.target);
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') close(null); };
+    document.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, []);
   if (!optional.length) return null;
   return (
-    <details style={{ display: 'inline-block' }}>
-      <summary style={{ cursor: 'pointer', ...muted }}>{label}{hidden.length ? `（已隐藏 ${hidden.length} 项）` : ''}</summary>
-      <div style={{ ...row, marginTop: 6, maxWidth: 420 }}>
+    <details ref={detailsRef} className="zc-admin-column-picker">
+      <summary>{label}{hidden.length ? `（已隐藏 ${hidden.length}）` : ''}</summary>
+      <div className="zc-admin-column-picker-panel"><div className="zc-admin-column-picker-list">
         {optional.map((column) => (
-          <label key={column.key} style={{ ...muted, display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+          <label key={column.key}>
             <input type="checkbox" checked={!hidden.includes(column.key)} onChange={() => onToggle(column.key)} />
             {column.header}
           </label>
         ))}
-        {hidden.length ? <Button onClick={onReset}>全部显示</Button> : null}
+        </div>{hidden.length ? <Button onClick={onReset}>全部显示</Button> : null}
       </div>
     </details>
   );
