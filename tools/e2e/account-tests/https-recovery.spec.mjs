@@ -21,6 +21,7 @@ test('isolated HTTPS process deployment restores managed custody and ledger on a
   let backend;
   let browser;
   let upstreamPort;
+  const proxyRequests = new Set();
   const freePort = async () => {
     const socket = createHttp();
     await listenOnSafePort(socket, '127.0.0.1');
@@ -46,6 +47,8 @@ test('isolated HTTPS process deployment restores managed custody and ledger on a
     if (!backend || backend.exitCode !== null) return;
     const child = backend;
     const exited = new Promise((done) => child.once('exit', done));
+    // Both callers close the browser first; do not leave its proxy requests in flight.
+    for (const upstream of proxyRequests) upstream.destroy();
     child.stdin.write('shutdown\n');
     const timer = setTimeout(() => child.kill(), 10_000);
     try { await exited; expect(child.exitCode).toBe(0); } finally { clearTimeout(timer); }
@@ -60,7 +63,14 @@ test('isolated HTTPS process deployment restores managed custody and ledger on a
         headers: { ...req.headers, 'x-forwarded-proto': 'https', 'x-forwarded-for': req.socket.remoteAddress } }, (response) => {
         res.writeHead(response.statusCode, response.headers); response.pipe(res);
       });
-      upstream.on('error', () => { res.writeHead(503); res.end(); });
+      proxyRequests.add(upstream);
+      upstream.once('close', () => proxyRequests.delete(upstream));
+      res.once('close', () => upstream.destroy());
+      req.once('aborted', () => upstream.destroy());
+      upstream.on('error', () => {
+        if (!res.destroyed && !res.headersSent) res.writeHead(503);
+        if (!res.destroyed) res.end();
+      });
       req.pipe(upstream);
     });
     await start(source);

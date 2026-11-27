@@ -1776,7 +1776,6 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
               {profiles.map((p) => (
                 <tr
                   key={p.id}
-                  role="button"
                   tabIndex={0}
                   onClick={() => setSelectedId(p.id)}
                   onKeyDown={(event) => {
