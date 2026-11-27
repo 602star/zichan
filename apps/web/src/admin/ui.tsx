@@ -330,7 +330,7 @@ export function Notice({ children, tone }: { children: ReactNode; tone?: 'bad' |
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <label style={{ display: 'grid', gap: 4, fontSize: 'var(--fs-sm)' }}>
+    <label className="zc-admin-field" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', minWidth: 0, gap: 4, fontSize: 'var(--fs-sm)' }}>
       <span style={muted}>{label}</span>
       {children}
     </label>
@@ -338,11 +338,11 @@ export function Field({ label, children }: { label: string; children: ReactNode 
 }
 
 export function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
-  return <input {...props} style={{ padding: '0 8px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface)', ...props.style }} />;
+  return <input {...props} style={{ minWidth: 0, maxWidth: '100%', padding: '0 8px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface)', ...props.style }} />;
 }
 
 export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
-  return <select {...props} style={{ padding: '0 8px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface)', ...props.style }} />;
+  return <select {...props} style={{ minWidth: 0, maxWidth: '100%', padding: '0 8px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface)', ...props.style }} />;
 }
 
 /**
