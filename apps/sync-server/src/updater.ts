@@ -6,7 +6,7 @@ import { CURRENT_SERVER_SCHEMA, CURRENT_SERVER_SCHEMA_NAME } from './store.js';
 import { acquireMaintenanceLock } from './maintenance-lock.js';
 import { readUpdateAsset, listUpdateFeedVersions, updateSourceConfigured, UPDATE_FEED_LIMIT } from './update-source.js';
 
-const MAX_ARTIFACT_BYTES = 64 * 1024 * 1024;
+const MAX_ARTIFACT_BYTES = 512 * 1024 * 1024;
 const VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
 const ASSET = /^zichan-(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.json$/;
 const FILE = /^(?:dist\/(?:server|maintenance)\.mjs|web-dist\/[A-Za-z0-9._/-]+)$/;
@@ -89,6 +89,7 @@ export async function reconcileLauncherResult(runtime: string, currentVersion: s
 }
 
 export function parseRelease(bytes: Buffer, expected: Feed): Release {
+  if (bytes.length > MAX_ARTIFACT_BYTES) throw new Error('更新包超过 512 MiB');
   if (createHash('sha256').update(bytes).digest('hex') !== expected.sha256) throw new Error('更新包 SHA256 不匹配');
   const release = JSON.parse(bytes.toString('utf8')) as Release;
   if (release.format !== 'zichan-release-v1' || release.version !== expected.version

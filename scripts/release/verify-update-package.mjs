@@ -1,5 +1,5 @@
 import { createHash, createPublicKey, verify } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 
 const [publicKeyPath, feedPath, packagePath] = process.argv.slice(2);
@@ -19,7 +19,9 @@ const signedText = `${feed.format}\n${feed.version}\n${feed.artifact}\n${feed.sh
 if (!verify(null, Buffer.from(signedText), publicKey, Buffer.from(feed.signature, 'base64'))) {
   throw new Error('更新清单签名无效');
 }
+if ((await stat(resolve(packagePath))).size > 512 * 1024 * 1024) throw new Error('更新包超过 512 MiB');
 const bytes = await readFile(resolve(packagePath));
+if (bytes.length > 512 * 1024 * 1024) throw new Error('更新包超过 512 MiB');
 if (createHash('sha256').update(bytes).digest('hex') !== feed.sha256) throw new Error('更新包摘要不符');
 const release = JSON.parse(bytes.toString('utf8'));
 if (release?.format !== 'zichan-release-v1' || release.version !== feed.version) {

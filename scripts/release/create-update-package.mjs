@@ -28,7 +28,7 @@ async function collect(directory) {
         ? name.replace('apps/sync-server/', '')
         : name.replace('apps/web/', 'web-');
       const data = await readFile(path);
-      // Keep the v1 protocol and old updater limits. Large public Web resources
+      // Keep the v1 protocol and reduce transfer size. Large public Web resources
       // are stored as gzip sidecars; the target server serves the original URLs.
       const compressible = bundlePath.startsWith('web-dist/') && !/\.(?:html|json)$/.test(bundlePath) && !bundlePath.endsWith('/sw.js') && data.length >= 1024;
       const packed = compressible ? gzipSync(data, { level: 9 }) : data;
@@ -44,7 +44,9 @@ if (!files.some((file) => file.path === 'dist/server.mjs')
 const artifact = `zichan-${version}.json`;
 const bytes = Buffer.from(JSON.stringify({ format: 'zichan-release-v1', version,
   schema: { version: Number(schemaVersion), name: schemaName }, files }));
-if (bytes.length > 64 * 1024 * 1024) throw new Error('更新包超过 64 MiB');
+if (bytes.length > 512 * 1024 * 1024) throw new Error('更新包超过 512 MiB');
+// This bridge release must still be installable by the 64 MiB legacy updater.
+if (version === '0.7.6' && bytes.length > 64 * 1024 * 1024) throw new Error('0.7.6 过渡更新包必须不超过 64 MiB');
 await mkdir(resolve(outputDirectory), { recursive: true });
 await writeFile(join(resolve(outputDirectory), artifact), bytes, { flag: 'wx', mode: 0o644 });
 if (unsigned) {

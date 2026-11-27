@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, verify } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { gunzipSync } from 'node:zlib';
@@ -18,12 +18,15 @@ test('v1 update packing compresses public assets while preserving entry files an
     await writeFile(join(directory, 'apps/sync-server/package.json'), '{"version":"0.7.5"}');
     await writeFile(join(directory, 'apps/sync-server/src/store.ts'), "export const CURRENT_SERVER_SCHEMA = 27;\nexport const CURRENT_SERVER_SCHEMA_NAME = 'fixture';");
     for (const name of ['server', 'maintenance']) await writeFile(join(directory, `apps/sync-server/dist/${name}.mjs`), 'export {};');
-    await writeFile(join(directory, 'apps/web/dist/index.html'), '<title>fixture</title>');
+    await writeFile(join(directory, 'apps/web/dist/index.html'), Buffer.alloc(65 * 1024 * 1024, 0x20));
     await writeFile(join(directory, 'apps/web/dist/ocr/manifest.json'), '{}');
     const resource = Buffer.alloc(4 * 1024 * 1024, 0x5a);
     await writeFile(join(directory, 'apps/web/dist/assets/worker.js'), resource);
     execFileSync(process.execPath, [join(directory, 'scripts/release/create-update-package.mjs'), '--unsigned', join(directory, 'output')]);
-    const packed = JSON.parse(await readFile(join(directory, 'output/zichan-0.7.5.json'), 'utf8'));
+    const artifact = join(directory, 'output/zichan-0.7.5.json');
+    const packedBytes = await readFile(artifact);
+    assert.ok(packedBytes.length > 64 * 1024 * 1024);
+    const packed = JSON.parse(packedBytes);
     assert.equal(packed.format, 'zichan-release-v1');
     assert.ok(packed.files.some((row) => row.path === 'web-dist/index.html'));
     assert.ok(packed.files.some((row) => row.path === 'web-dist/ocr/manifest.json'));
@@ -31,6 +34,20 @@ test('v1 update packing compresses public assets while preserving entry files an
     const compressed = Buffer.from(packed.files.find((row) => row.path === 'web-dist/assets/worker.js.gz').data, 'base64');
     assert.ok(compressed.length < resource.length / 10);
     assert.deepEqual(gunzipSync(compressed), resource);
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    const key = join(directory, 'key.pem'), publicPath = join(directory, 'public.pem');
+    await writeFile(key, privateKey.export({ type: 'pkcs8', format: 'pem' }));
+    await writeFile(publicPath, publicKey.export({ type: 'spki', format: 'pem' }));
+    execFileSync(process.execPath, [join(root, 'scripts/release/sign-update-package.mjs'), 'v0.7.5', key, artifact, join(directory, 'output')]);
+    execFileSync(process.execPath, [join(root, 'scripts/release/verify-update-package.mjs'), publicPath, join(directory, 'output/latest.json'), artifact]);
+    // A sparse oversized candidate must be refused before it is loaded into memory.
+    await truncate(artifact, 512 * 1024 * 1024 + 1);
+    for (const args of [
+      ['sign-update-package.mjs', 'v0.7.5', key, artifact, join(directory, 'output')],
+      ['verify-update-package.mjs', publicPath, join(directory, 'output/latest.json'), artifact],
+    ]) assert.throws(() => execFileSync(process.execPath, [join(root, 'scripts/release', args[0]), ...args.slice(1)], { stdio: 'pipe' }), /超过 512 MiB/);
+    await writeFile(join(directory, 'apps/sync-server/package.json'), '{"version":"0.7.6"}');
+    assert.throws(() => execFileSync(process.execPath, [join(directory, 'scripts/release/create-update-package.mjs'), '--unsigned', join(directory, 'bridge-output')], { stdio: 'pipe' }), /过渡更新包必须不超过 64 MiB/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 

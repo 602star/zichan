@@ -19,8 +19,8 @@ const test = base.extend({ baseURL: async ({}, use) => {
     execFileSync(process.execPath, [join(root, 'scripts/release/create-update-package.mjs'), '--unsigned', output]);
     const version = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')).version;
     const artifact = join(output, `zichan-${version}.json`), data = await readFile(artifact);
-    expect(data.length).toBeLessThanOrEqual(64 * 1024 ** 2);
-    // Exercise the unchanged v1 signature and byte limits with an isolated test key.
+    expect(data.length).toBeLessThanOrEqual(512 * 1024 ** 2);
+    // Exercise the v1 signature and current byte limits with an isolated test key.
     const { privateKey, publicKey } = generateKeyPairSync('ed25519');
     const key = join(directory, 'key.pem'), publicPath = join(directory, 'public.pem');
     await writeFile(key, privateKey.export({ type: 'pkcs8', format: 'pem' }));

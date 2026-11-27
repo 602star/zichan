@@ -16,9 +16,81 @@ afterEach(async () => {
     else process.env[key] = value;
   }
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
+function streamingSource() {
+  vi.useFakeTimers();
+  delete process.env.UPDATE_FEED_DIR;
+  delete process.env.UPDATE_GITHUB_REPO;
+  process.env.UPDATE_FEED_URL = 'https://updates.example/latest.json';
+  let writer!: ReadableStreamDefaultController<Uint8Array>;
+  let signal!: AbortSignal;
+  const stream = new ReadableStream<Uint8Array>({ start(controller) { writer = controller; } });
+  vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+    signal = init.signal!;
+    signal.addEventListener('abort', () => writer.error(signal.reason), { once: true });
+    return new Response(stream);
+  }));
+  return { write: (text: string) => writer.enqueue(Buffer.from(text)), close: () => writer.close(), aborted: () => signal.aborted };
+}
+
 describe('update sources', () => {
+  it('keeps receiving a slow artifact for more than ten minutes and clears its timer on completion', async () => {
+    const source = streamingSource();
+    const result = readUpdateAsset('zichan-0.7.6.json', 512 * 1024 * 1024);
+    for (let index = 0; index < 3; index++) {
+      await vi.advanceTimersByTimeAsync(9 * 60_000);
+      expect(source.aborted()).toBe(false);
+      source.write('data');
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    source.close();
+    expect((await result).toString()).toBe('datadatadata');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('aborts after ten minutes without bytes, measuring from the last nonempty chunk', async () => {
+    const source = streamingSource();
+    const result = readUpdateAsset('zichan-0.7.6.json', 512 * 1024 * 1024);
+    const failed = expect(result).rejects.toThrow('连续 10 分钟未收到数据');
+    await vi.advanceTimersByTimeAsync(9 * 60_000);
+    source.write('data');
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(9 * 60_000);
+    source.write('');
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(source.aborted()).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await failed;
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('also times out when no response headers arrive for ten minutes', async () => {
+    vi.useFakeTimers();
+    delete process.env.UPDATE_FEED_DIR;
+    delete process.env.UPDATE_GITHUB_REPO;
+    process.env.UPDATE_FEED_URL = 'https://updates.example/latest.json';
+    vi.stubGlobal('fetch', vi.fn((_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
+      init.signal!.addEventListener('abort', () => reject(init.signal!.reason), { once: true });
+    })));
+    const failed = expect(readUpdateAsset('zichan-0.7.6.json', 512 * 1024 * 1024)).rejects.toThrow('连续 10 分钟未收到数据');
+    await vi.advanceTimersByTimeAsync(600_000);
+    await failed;
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('keeps the metadata total timeout at thirty seconds even when bytes arrive', async () => {
+    const source = streamingSource();
+    const failed = expect(readUpdateAsset('latest.json', 4096)).rejects.toThrow('更新清单请求超时');
+    await vi.advanceTimersByTimeAsync(20_000);
+    source.write('data');
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await failed;
+    expect(vi.getTimerCount()).toBe(0);
+  });
   it('reads a local signed feed without exposing private paths', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'zichan-update-source-'));
     try {

@@ -108,6 +108,16 @@ describe('signed stable self updates', () => {
     expect(() => parseRelease(Buffer.concat([release, Buffer.from(' ')]), feed)).toThrow('SHA256');
   });
 
+  it('accepts packages larger than the legacy 64 MiB limit and rejects over 512 MiB before hashing', () => {
+    const content = JSON.parse(release.toString());
+    content.files.push({ path: 'web-dist/assets/large-model.bin', data: 'AAAA'.repeat(23 * 1024 * 1024) });
+    const bytes = Buffer.from(JSON.stringify(content));
+    expect(bytes.length).toBeGreaterThan(64 * 1024 * 1024);
+    expect(parseRelease(bytes, { ...feed, sha256: createHash('sha256').update(bytes).digest('hex') }).files).toHaveLength(4);
+    // The guard must run before hashing or parsing, so this allocation is never read.
+    expect(() => parseRelease(Buffer.allocUnsafe(512 * 1024 * 1024 + 1), feed)).toThrow('超过 512 MiB');
+  });
+
   it('rejects paths outside the release even when the package hash is valid', () => {
     const escaped = Buffer.from(JSON.stringify({
       format: 'zichan-release-v1', version: '0.3.2',

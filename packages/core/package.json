@@ -1,6 +1,6 @@
 {
   "name": "@zichan/core",
-  "version": "0.7.5",
+  "version": "0.7.6",
   "description": "Platform-agnostic core: data model + lifecycle calculations",
   "type": "module",
   "main": "./dist/index.js",

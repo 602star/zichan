@@ -1,5 +1,5 @@
 import { createHash, createPrivateKey, sign } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 
 const [tag, privateKeyPath, packagePath, outputDirectory] = process.argv.slice(2);
@@ -11,8 +11,9 @@ if (!/^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(tag)) throw new Er
 const version = tag.slice(1);
 const artifact = `zichan-${version}.json`;
 if (basename(packagePath) !== artifact) throw new Error('候选包文件名与标签不一致');
+if ((await stat(resolve(packagePath))).size > 512 * 1024 * 1024) throw new Error('候选包超过 512 MiB');
 const bytes = await readFile(resolve(packagePath));
-if (bytes.length === 0 || bytes.length > 64 * 1024 * 1024) throw new Error('候选包大小无效');
+if (bytes.length === 0 || bytes.length > 512 * 1024 * 1024) throw new Error('候选包大小无效');
 const release = JSON.parse(bytes.toString('utf8'));
 if (release?.format !== 'zichan-release-v1' || release.version !== version
   || !Number.isSafeInteger(release.schema?.version) || !release.schema?.name
@@ -35,7 +36,7 @@ for (const file of release.files) {
   }
   names.add(file.path);
   decodedBytes += Buffer.byteLength(file.data, 'base64');
-  if (decodedBytes > 64 * 1024 * 1024) throw new Error('候选包解压后超过大小限制');
+  if (decodedBytes > 512 * 1024 * 1024) throw new Error('候选包解压后超过大小限制');
 }
 const feed = { format: 'zichan-update-feed-v1', version, artifact,
   sha256: createHash('sha256').update(bytes).digest('hex') };

@@ -21,30 +21,50 @@ interface GithubRelease { tag_name: string; draft: boolean; prerelease: boolean;
 
 async function boundedResponse(url: string, limit: number, init?: RequestInit,
   onProgress?: (received: number, total?: number) => void, allowGithubAssetRedirect = false): Promise<Buffer> {
-  const response = await fetch(url, { ...init, redirect: 'manual', signal: AbortSignal.timeout(30_000) });
-  if (response.status === 302 || response.status === 301) {
-    if (!allowGithubAssetRedirect) throw new Error('更新源不允许重定向');
-    const location = response.headers.get('location');
-    if (!location) throw new Error('更新源重定向缺少地址');
-    const target = new URL(location);
-    if (target.protocol !== 'https:' || !['release-assets.githubusercontent.com', 'objects.githubusercontent.com'].includes(target.hostname)) {
-      throw new Error('更新源重定向地址不可信');
+  const artifact = limit > 1024 * 1024;
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const resetTimeout = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => controller.abort(new Error(artifact
+      ? '更新包连续 10 分钟未收到数据，下载已超时'
+      : '更新清单请求超时')), artifact ? 10 * 60_000 : 30_000);
+    timer.unref();
+  };
+  resetTimeout();
+  try {
+    const response = await fetch(url, { ...init, redirect: 'manual', signal: controller.signal });
+    if (response.status === 302 || response.status === 301) {
+      if (!allowGithubAssetRedirect) throw new Error('更新源不允许重定向');
+      const location = response.headers.get('location');
+      if (!location) throw new Error('更新源重定向缺少地址');
+      const target = new URL(location);
+      if (target.protocol !== 'https:' || !['release-assets.githubusercontent.com', 'objects.githubusercontent.com'].includes(target.hostname)) {
+        throw new Error('更新源重定向地址不可信');
+      }
+      return boundedResponse(target.href, limit, undefined, onProgress);
     }
-    return boundedResponse(target.href, limit, undefined, onProgress);
+    if (!response.ok || !response.body) throw new Error(`更新源响应 HTTP ${response.status}`);
+    const chunks: Buffer[] = [];
+    let size = 0;
+    const length = Number(response.headers.get('content-length'));
+    const total = Number.isSafeInteger(length) && length > 0 ? length : undefined;
+    for await (const chunk of response.body) {
+      const bytes = Buffer.from(chunk);
+      if (!bytes.length) continue;
+      if (artifact) resetTimeout();
+      size += bytes.length;
+      if (size > limit) throw new Error('更新文件超过大小限制');
+      chunks.push(bytes);
+      onProgress?.(size, total);
+    }
+    return Buffer.concat(chunks);
+  } catch (error) {
+    if (controller.signal.aborted) throw controller.signal.reason;
+    throw error;
+  } finally {
+    clearTimeout(timer);
   }
-  if (!response.ok || !response.body) throw new Error(`更新源响应 HTTP ${response.status}`);
-  const chunks: Buffer[] = [];
-  let size = 0;
-  const length = Number(response.headers.get('content-length'));
-  const total = Number.isSafeInteger(length) && length > 0 ? length : undefined;
-  for await (const chunk of response.body) {
-    const bytes = Buffer.from(chunk);
-    size += bytes.length;
-    if (size > limit) throw new Error('更新文件超过大小限制');
-    chunks.push(bytes);
-    onProgress?.(size, total);
-  }
-  return Buffer.concat(chunks);
 }
 
 function configuredSource(): 'directory' | 'url' | 'github' {
