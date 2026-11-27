@@ -1268,7 +1268,6 @@ function Section<T extends { id: string; version: number }>(props: {
             {filteredItems.map((t) => (
               <tr
                 key={t.id}
-                role="button"
                 tabIndex={0}
                 onClick={() => props.onEdit ? props.onEdit(t) : setEditing(t)}
                 onKeyDown={(event) => {

@@ -3027,7 +3027,7 @@ button.zc-fixed-record-row:hover { background: var(--surface-2); }
 
 @media (max-width: 767px) {
   .zc-first-run-title {
-    font-size: var(--fs-hero);
+    font-size: var(--fs-heading);
   }
 
   input:not([type="checkbox"]):not([type="radio"]), select, textarea {

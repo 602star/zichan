@@ -122,19 +122,23 @@ test('runs the daily management work: policy, invites, roles, quotas and audit',
   await expect(page.getByLabel('当前策略')).toHaveValue('open');
   const policy = page.waitForResponse((response) => response.url().includes('/api/admin/registration') && response.request().method() === 'POST');
   await page.getByLabel('当前策略').selectOption('closed');
+  await page.getByRole('button', { name: '确认切换', exact: true }).click();
   expect((await policy).status()).toBe(200);
   await expect(page.getByLabel('当前策略')).toHaveValue('closed');
   await expect(page.getByText('当前已关闭注册')).toBeVisible();
   const restore = page.waitForResponse((response) => response.url().includes('/api/admin/registration') && response.request().method() === 'POST');
   await page.getByLabel('当前策略').selectOption('invite');
+  await page.getByRole('button', { name: '确认切换', exact: true }).click();
   expect((await restore).status()).toBe(200);
 
   const created = page.waitForResponse((response) => response.url().endsWith('/api/admin/invites') && response.request().method() === 'POST');
   await page.getByRole('button', { name: '生成一次性邀请码' }).click();
   const invite = (await (await created).json()).invite;
   // The fresh code is shown once above the list and stays visible as a row in it.
-  await expect(page.getByRole('button', { name: '复制' })).toBeVisible();
-  await expect(page.getByRole('cell', { name: invite.code, exact: true })).toBeVisible();
+  const copyInvite = { name: `复制 ${invite.code}`, exact: true };
+  await expect(page.locator('#section-生成邀请码').getByRole('button', copyInvite)).toBeVisible();
+  const inviteCell = page.getByRole('cell').filter({ has: page.getByRole('button', copyInvite) });
+  await expect(inviteCell).toContainText(invite.code);
 
   // User detail: roles, quotas and capacity, with a readable audit sentence afterwards.
   await page.getByRole('link', { name: '用户管理' }).click();

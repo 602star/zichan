@@ -106,7 +106,7 @@ test('account session links use exact identity and compose with search filters',
     const rows = (name) => page.getByRole('row').filter({ has: page.getByRole('button', { name, exact: true }) });
     await expect(rows('alice').first()).toBeVisible();
     await expect(rows('alice2')).toHaveCount(0);
-    await page.getByLabel('用户名、accountId 或设备名', { exact: true }).fill('alice2');
+    await page.getByLabel('用户名、账号 ID 或设备名', { exact: true }).fill('alice2');
     await page.getByRole('button', { name: '搜索', exact: true }).click();
     await expect(rows('alice')).toHaveCount(0);
     await expect(rows('alice2')).toHaveCount(0);
@@ -121,7 +121,7 @@ test('account session links use exact identity and compose with search filters',
 
 for (const view of [
   { path: 'users', label: '用户管理', input: '登录账号、昵称或账号 ID' },
-  { path: 'sessions', label: '设备与会话', input: '用户名、accountId 或设备名' },
+  { path: 'sessions', label: '设备与会话', input: '用户名、账号 ID 或设备名' },
 ]) {
   test(`${view.path} search follows browser back and forward without submitting drafts`, async ({ page }) => {
     const f = await fixture();
@@ -258,6 +258,7 @@ test('reflects the stored registration policy and paginates and filters invitati
     await expect(list.locator('tbody tr')).toHaveCount(1);
     const saved = page.waitForResponse((response) => response.url().includes('/api/admin/registration') && response.request().method() === 'POST');
     await page.getByLabel('当前策略').selectOption('closed');
+    await page.getByRole('button', { name: '确认切换', exact: true }).click();
     expect((await saved).status()).toBe(200);
     await expect(page.getByText('当前已关闭注册：即使持有邀请码也无法注册。')).toBeVisible();
     // Revisiting the page reads the effective value back from the server.

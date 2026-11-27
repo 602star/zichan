@@ -313,7 +313,7 @@
 .zc-admin-user-card[data-quota="warning"]:not([data-disabled="true"]) { border-top-color: var(--text-primary); }
 .zc-admin-user-card[data-active="true"] { grid-column: 1 / -1; border-color: var(--border-strong); }
 .zc-admin-user-card-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 12px; }
-.zc-admin-user-select { display: grid; place-items: center; flex: none; width: 32px; height: 32px; cursor: pointer; }
+.zc-admin-user-select { display: grid; place-items: center; flex: none; width: 44px; height: 44px; cursor: pointer; }
 .zc-admin-user-select:has(input:disabled) { cursor: not-allowed; }
 .zc-admin-user-identity { display: grid; gap: 3px; min-width: 0; flex: 1 1 150px; }
 .zc-admin-root .zc-admin-user-name { width: fit-content; max-width: 100%; min-height: 0; padding: 0; border: 0; background: none; color: var(--text-primary); text-align: left; font-size: var(--fs-title); font-weight: var(--fw-bold); white-space: normal; overflow-wrap: anywhere; cursor: pointer; }

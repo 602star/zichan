@@ -2710,7 +2710,6 @@ function TransactionList({ vm, revealMatches, initialDetailId, onEdit, onRefund,
                   key={tx.id}
                   {...gestures.bind(tx.id)}
                   data-gesture-direction={gestures.preview?.id === tx.id ? gestures.preview.direction : undefined}
-                  role="button"
                   aria-expanded={!compact ? panel?.id === tx.id : undefined}
                   tabIndex={0}
                   onKeyDown={(event) => {

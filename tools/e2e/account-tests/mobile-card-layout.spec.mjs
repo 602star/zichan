@@ -114,7 +114,7 @@ test('populated mobile cards keep amounts and actions within the phone viewport'
     await expect(page.getByRole('textbox', { name: '流水搜索' })).toBeVisible();
     await page.getByRole('textbox', { name: '流水搜索' }).fill('没有这笔流水');
     await filterToggle.click();
-    await expect(filterToggle).toContainText('筛选 · 1 项');
+    await expect(filterToggle).toContainText('筛选（1）');
     await expect(page.getByRole('textbox', { name: '流水搜索' })).toBeHidden();
     await page.getByRole('combobox', { name: '快捷时间范围' }).first().selectOption('custom');
     await expect(page.locator('#transaction-records .zc-date-boundary').first()).toBeVisible();
