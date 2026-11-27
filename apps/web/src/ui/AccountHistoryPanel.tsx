@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useState } from 'react';
 import { D, accountBalanceTiming, isLegacyExternalAccount, type Account, type Asset, type Category, type Transaction } from '@zichan/core';
 import { assignTransactionAccounts, previewAccountAssignment, saveTransactionAggregate, type SqlLedgerStore } from '@zichan/db';
-import { categoryLabel } from '../transactionMeta.js';
+import { categoryLabel, rootCategoryId } from '../transactionMeta.js';
 import { CategoryPicker } from './EntityFormModal.js';
 import { DialogShell } from './DialogShell.js';
 export function AccountHistoryPanel({ store, accounts, assets, categories, timeZone, initialAccountId, onChanged, onClose }: {
@@ -25,7 +25,7 @@ export function AccountHistoryPanel({ store, accounts, assets, categories, timeZ
   const reload = useCallback(async () => setRows((await store.transactions.list()).filter((t) => t.recordState !== 'voided' && ['expense', 'income', 'refund'].includes(t.type) && t.accountId !== target)), [store, target]);
   useEffect(() => { void reload().catch((e: unknown) => setError(String(e))); }, [reload]);
   const account = funds.find((a) => a.id === target);
-  const visible = rows.filter((t) => (!category || t.category === category) && (!from || t.date >= from) && (!to || t.date <= to) && `${t.description ?? ''} ${categoryLabel(t.category, categories)} ${t.amount}`.includes(filter));
+  const visible = rows.filter((t) => (!category || t.category === category || rootCategoryId(t.category, categories) === category) && (!from || t.date >= from) && (!to || t.date <= to) && `${t.description ?? ''} ${categoryLabel(t.category, categories)} ${t.amount}`.includes(filter));
   const input = rows.filter((t) => selected[t.id]).map((t) => ({ id: t.id, version: t.version, timing: timing[t.id] }));
   async function run(action: () => Promise<void>) { setBusy(true); setError(''); try { await action(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); } }
   return <DialogShell labelledBy={title} onDismiss={onClose} dismissDisabled={busy} panelStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', width: 'min(760px, calc(100vw - 24px))', maxHeight: '90dvh', overflow: 'auto', padding: 24 }}
@@ -53,7 +53,7 @@ export function AccountHistoryPanel({ store, accounts, assets, categories, timeZ
     {account?.balanceStartAt && <p>余额起点：{new Date(account.balanceStartAt).toLocaleString('zh-CN', { timeZone })} · {account.openingBalance} {assets.find((a) => a.id === account.openingAssetId)?.code}</p>}
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}><input aria-label="筛选历史记录" className="zc-input" placeholder="备注、分类或金额" value={filter} onChange={(e) => setFilter(e.target.value)} /><input aria-label="开始日期" type="date" value={from} onChange={(e) => setFrom(e.target.value)} /><input aria-label="结束日期" type="date" value={to} onChange={(e) => setTo(e.target.value)} /></div>
     <CategoryPicker fieldId={`${title}-category`} name="historyCategory" ariaLabel="历史记录分类" value={category}
-      allowEmpty emptyLabel="全部分类" placeholder="全部分类" defaultShowHidden
+      allowEmpty allowParentSelection emptyLabel="全部分类" placeholder="全部分类" defaultShowHidden
       options={[...new Set(rows.map((t) => t.category))].map((id) => {
         const item = categories.find((entry) => entry.id === id);
         return { value: id, icon: item?.icon, parentId: item?.parentId, parentIcon: categories.find((entry) => entry.id === item?.parentId)?.icon, color: item?.color, label: categoryLabel(id, categories), name: item?.name ?? id,

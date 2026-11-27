@@ -154,7 +154,7 @@ function defaultSettlementAssetId(snap: Snapshot): string {
   return moduleCurrencyId(snap.setting, 'transaction', settlementOpts(snap)[0]?.value ?? '');
 }
 function currentTime(): string {
-  return new Date().toTimeString().slice(0, 8);
+  return new Date().toTimeString().slice(0, 5);
 }
 function currentDate(): string {
   return localToday();
@@ -368,7 +368,7 @@ export function categoryForm(snap?: Snapshot): EntityFormSpec<Category> {
       { key: 'name', label: '名称', type: 'text', half: true, required: true },
       { key: 'type', label: '类型', type: 'select', half: true, options: CATEGORY_TYPES, required: true },
       { key: 'parentId', label: '父级分类', type: 'select', half: true, options: parentOptions, allowEmpty: true },
-      { key: 'color', label: '颜色', type: 'text', half: true, placeholder: '#ef4444' },
+      { key: 'color', label: '颜色', type: 'color', half: true, placeholder: '#b63226' },
       { key: 'sortOrder', label: '排序', type: 'number', half: true, defaultValue: '100' },
       { key: 'budgetable', label: '纳入预算', type: 'checkbox', half: true },
       { key: 'isHidden', label: '在快速选择中隐藏', type: 'checkbox', half: true },
@@ -410,7 +410,7 @@ export function transactionTagForm(): EntityFormSpec<TransactionTag> {
     fields: [
       { key: 'name', label: '名称', type: 'text', half: true, required: true },
       { key: 'groupName', label: '分组', type: 'text', half: true, placeholder: '项目 / 人 / 地点 / 报销 / 游戏' },
-      { key: 'color', label: '颜色', type: 'text', half: true, placeholder: '#14b8a6' },
+      { key: 'color', label: '颜色', type: 'color', half: true, placeholder: '#14b8a6' },
       { key: 'sortOrder', label: '排序', type: 'number', half: true, defaultValue: '100' },
       { key: 'isActive', label: '启用', type: 'checkbox', half: true, defaultValue: 'true' },
       { key: 'note', label: '备注', type: 'textarea' },
@@ -805,7 +805,7 @@ export function budgetCategoryForm(snap: Snapshot, selectedMonth = currentDate()
   return {
     title: '分类预算',
     fields: [
-      { key: 'month', label: '月份', type: 'text', half: true, defaultValue: month, placeholder: '2026-07', required: true },
+      { key: 'month', label: '月份', type: 'month', half: true, defaultValue: month, placeholder: '2026-07', required: true },
       { key: 'category', label: '二级分类', type: 'category', half: true, options: categoryOptions(snap.categories, 'expense', { leafOnly: true, includeHidden: true }), ...categoryPickerPreference(snap), required: true },
       { key: 'plannedAmount', label: '预算金额', type: 'number', half: true, required: true },
       { key: 'assetId', label: '预算币种', type: 'select', half: true, defaultValue: defaultAssetId, options: settlementOpts(snap, defaultAssetId), required: true },

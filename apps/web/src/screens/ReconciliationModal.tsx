@@ -4,6 +4,7 @@ import { D, isLegacyExternalAccount, isSystemDefaultAccount, localToday, dayOfIn
 import { closeReconciliation, previewReconciliation, undoLatestReconciliation, type ReconciliationPreview, type SqlLedgerStore } from '@zichan/db';
 import type { Snapshot } from '../db/snapshot.js';
 import { num } from '../format.js';
+import { sanitizeNumericInput } from '../form-number.js';
 import { categoryLabel } from '../transactionMeta.js';
 import { CardAlert, CardEmpty, CardFact, CardGroup, CardMetric } from '../ui/Card.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
@@ -132,7 +133,7 @@ export function ReconciliationModal(props: Props) {
     finally { flight.current = false; setBusy(false); }
   }
 
-  return <WorkspaceDialog workspace="page" navigationBlocked={dirty || busy} labelledBy={titleId} onDismiss={requestClose} dismissDisabled={busy}
+  return <WorkspaceDialog workspace="page" navigationBlocked={dirty || busy} onSaveShortcut={!session && canFinish ? () => void finish() : undefined} labelledBy={titleId} onDismiss={requestClose} dismissDisabled={busy}
     panelClassName="zc-entity-modal zc-reconciliation-modal"
     panelStyle={{ width: 'min(1120px, calc(100vw - 24px))', maxHeight: '92dvh', overflow: 'hidden', padding: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)' }}
       header={<>
@@ -164,7 +165,7 @@ export function ReconciliationModal(props: Props) {
             options={snap.assets.filter((row) => (!row.isDeleted && row.isActive) || row.id === assetId).map((row) => ({ value: row.id, label: `${row.code} · ${row.name}` }))}
             onChange={(id) => { setAssetId(id); setStatementBalance(''); resetCriteria(); }} /></div>
           <label className="zc-field">账单截止日<DateTimeInput className="zc-input" aria-label="账单截止日" disabled={busy || !!session || props.readOnly} type="date" value={statementDate} onChange={(value) => { setStatementDate(value); resetCriteria(); }} /></label>
-          <label className="zc-field">账单期末余额<input className="zc-input" aria-label="账单期末余额" disabled={busy || !!session || props.readOnly} inputMode="decimal" placeholder="请填写实际余额，0 也需填写" value={statementBalance} onChange={(event) => { setStatementBalance(event.target.value); setAdjustmentFor(null); setError(''); }} /></label>
+          <label className="zc-field">账单期末余额<input className="zc-input" aria-label="账单期末余额" disabled={busy || !!session || props.readOnly} inputMode="decimal" placeholder="请填写实际余额，0 也需填写" value={statementBalance} onChange={(event) => { setStatementBalance(event.target.value); setAdjustmentFor(null); setError(''); }} onBlur={(event) => { const cleaned = sanitizeNumericInput(event.target.value); if (cleaned !== event.target.value) setStatementBalance(cleaned); }} /></label>
         </fieldset>
       </CardGroup>
       {!session && <CardGroup><h3>勾选账单上已有的流水</h3><p className="zc-caption">只勾选这张账单中能对应上的记录。未勾选的流水仍计入账本余额，可以留到下次核对。</p>

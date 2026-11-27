@@ -55,7 +55,7 @@ import { amount as fmtAmount, money, num, signedMoney } from '../format.js';
 import { amountColor, selectBase, tag as tagStyle, td as tdStyle, th as thStyle } from '../ui/styles.js';
 import { ChartLegend, CompositionDonut, TrendBars, type ChartSlice } from '../ui/charts.js';
 import { CATEGORY_COLORS, OTHER_CATEGORY_COLOR } from '../theme.js';
-import { CATEGORY_PACKS, categoryPackState, categoryLabel, categoryName, categoryOptions, categoryType as metaCategoryType, rootCategoryId, transactionSummaryTitle, TYPE_LABEL } from '../transactionMeta.js';
+import { allCategories, CATEGORY_PACKS, categoryPackState, categoryLabel, categoryName, categoryOptions, categoryType as metaCategoryType, rootCategoryId, transactionSummaryTitle, TYPE_LABEL } from '../transactionMeta.js';
 import {
   buildBudgetMonth,
   buildBudgetMonthFromAggregates,
@@ -930,16 +930,20 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
    *   的区间都不该丢。
    */
   function changeCategoryFilter(next: string) {
+    const isParent = next !== '' && allCategories(readySnap.categories, { includeCatalog: true, includeInactive: true })
+      .some((category) => category.parentId === next);
     setCategoryDrill((drill) => {
       if (!drill) return null;
       const parent = drill.parent || (drill.child ? rootCategoryId(drill.child, readySnap.categories) : '');
-      const nextParent = next ? rootCategoryId(next, readySnap.categories) : '';
-      const stillInside = next !== '' && parent === nextParent && (!drill.child || drill.child === next);
+      const nextParent = next ? (isParent ? next : rootCategoryId(next, readySnap.categories)) : '';
+      const stillInside = next !== '' && parent === nextParent && (isParent ? !drill.child : (!drill.child || drill.child === next));
       return stillInside ? drill : null;
     });
-    setFilters((current) => (next
-      ? { ...current, category: next, parentCategory: rootCategoryId(next, readySnap.categories) }
-      : { ...current, category: 'all', parentCategory: 'all' }));
+    setFilters((current) => (!next
+      ? { ...current, category: 'all', parentCategory: 'all' }
+      : isParent
+        ? { ...current, category: 'all', parentCategory: next }
+        : { ...current, category: next, parentCategory: rootCategoryId(next, readySnap.categories) }));
   }
 
   async function removeSavedView(view: TransactionSavedView) {
@@ -2527,15 +2531,8 @@ function valueOptionsForField(snap: Snapshot, field: AdvancedQueryField): { valu
 function Filters(props: { snap: Snapshot; filters: TransactionFilters; setFilters: Dispatch<SetStateAction<TransactionFilters>>; usesAccounts: boolean; onCategoryChange: (next: string) => void }) {
   const { snap, filters, setFilters, usesAccounts, onCategoryChange } = props;
   const typeOptions = usesAccounts ? TYPE_OPTIONS : BASIC_TYPE_OPTIONS;
-  /* 环下钻到板块时（`parentCategory`）分类控件本身没有这一项可选，但它确实在筛。 */
   const parentDrill = filters.parentCategory && filters.parentCategory !== 'all' ? filters.parentCategory : '';
-  /*
-   * 控件说「X · 全部」只在筛选确实停在一级上时（值里没有二级）。选了二级的话一级只是
-   * 它的归属（见 `changeCategoryFilter`），该说的是「全部分类」——否则空选项就被一级的
-   * 名字占着，用户再也回不到「全部分类」（当初这两处 e2e 红的就是这一步）。
-   */
-  const boardOnly = filters.category === 'all' ? parentDrill : '';
-  const boardOnlyLabel = boardOnly ? categoryLabel(boardOnly, snap.categories) : '';
+  const pickerValue = filters.category !== 'all' ? filters.category : parentDrill;
   return (
     <div className="zc-transaction-filters" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(120px, 1fr))', gap: 10, marginBottom: 16 }}>
       <select aria-label="流水类型" style={selectStyle} value={filters.type} onChange={(e) => setFilters((f) => ({ ...f, type: e.target.value as TransactionFilters['type'] }))}>
@@ -2545,16 +2542,14 @@ function Filters(props: { snap: Snapshot; filters: TransactionFilters; setFilter
         fieldId="transaction-filter-category"
         name="category"
         ariaLabel="流水分类"
-        value={filters.category === 'all' ? '' : filters.category}
-        // 读路径：含隐藏与被停用的分类（后者带「已停用」徒标，搜索或开「显示隐藏」能找到），
-        // 否则那些分类下的旧流水就筛不着了。目录里尚未落库的分类不出现——
-        // 没有任何流水会引用它们，选了只会得到空结果。
+        value={pickerValue}
+        // 读路径：含隐藏与被停用的分类（后者带「已停用」徽标，搜索或开「显示隐藏」能找到），
+        // 否则那些分类下的旧流水就筛不着了。允许直接选择一级分类（筛整个板块）。
         options={historicalCategoryValueOptions(snap)}
         allowEmpty
-        /* 环下钻到板块时，这条筛选确实在生效（只是值是一级），所以空选项必须
-           说清楚它跟的是哪个板块——否则控件写着「全部分类」、列表却少了一大半。*/
-        emptyLabel={boardOnlyLabel ? `${boardOnlyLabel} · 全部` : '全部分类'}
-        placeholder={boardOnlyLabel ? `${boardOnlyLabel} · 全部` : '全部分类'}
+        allowParentSelection
+        emptyLabel="全部分类"
+        placeholder="全部分类"
         defaultShowHidden={snap.setting?.categoryPickerDefaultScope === 'all'}
         triggerStyle={selectStyle}
         onChange={(next) => onCategoryChange(next)}

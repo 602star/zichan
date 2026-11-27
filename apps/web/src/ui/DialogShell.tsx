@@ -30,12 +30,50 @@ const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(',');
 
+const FORM_INPUT_SELECTOR = [
+  'input:not([disabled]):not([type="hidden"])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+].join(',');
+
 function focusableElements(root: HTMLElement): HTMLElement[] {
   return [...root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)].filter((element) => {
     if (element.hidden || element.getAttribute('aria-hidden') === 'true') return false;
     if (element.closest('[hidden], [inert]')) return false;
     return element.tabIndex >= 0;
   });
+}
+
+function isCoarsePointer(): boolean {
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    && window.matchMedia('(pointer: coarse)').matches;
+}
+
+/**
+ * Pick the initial focus element when a dialog mounts:
+ * 1. Explicit `initialFocusRef` or `[data-dialog-initial-focus]`.
+ * 2. On fine pointers (desktop), prefer the first editable field inside the
+ *    dialog body so typing starts right away instead of landing on the close X.
+ * 3. On coarse pointers (touch), avoid auto-opening the soft keyboard by
+ *    preferring the first non-input control, or the panel itself.
+ */
+export function selectDialogInitialFocus(panel: HTMLElement, coarsePointer = isCoarsePointer()): HTMLElement {
+  const marked = panel.querySelector<HTMLElement>('[data-dialog-initial-focus]');
+  if (marked && !marked.hasAttribute('disabled') && !marked.closest('[hidden], [inert]')) return marked;
+  const focusables = focusableElements(panel);
+  if (!coarsePointer) {
+    const body = panel.querySelector<HTMLElement>('.zc-dialog-body') ?? panel;
+    const firstInput = [...body.querySelectorAll<HTMLElement>(FORM_INPUT_SELECTOR)].find((el) => (
+      !el.hidden && el.getAttribute('aria-hidden') !== 'true' && !el.closest('[hidden], [inert]') && el.tabIndex >= 0
+    ));
+    if (firstInput) return firstInput;
+    const firstNonClose = focusables.find((el) => !el.getAttribute('aria-label')?.startsWith('关闭'));
+    if (firstNonClose) return firstNonClose;
+  } else {
+    const firstNonInput = focusables.find((el) => !el.matches('input, textarea'));
+    if (firstNonInput) return firstNonInput;
+  }
+  return focusables[0] ?? panel;
 }
 
 /** Pure focus-wrap decision used by the keyboard contract and unit tests. */
@@ -89,6 +127,7 @@ export interface DialogShellProps {
   closeOnBackdrop?: boolean;
   dismissDisabled?: boolean;
   onSaveShortcut?: () => void;
+  onSaveContinueShortcut?: () => void;
   initialFocusRef?: RefObject<HTMLElement | null>;
   backdropClassName?: string;
   panelClassName?: string;
@@ -127,6 +166,7 @@ export function DialogShell({
   closeOnBackdrop = true,
   dismissDisabled = false,
   onSaveShortcut,
+  onSaveContinueShortcut,
   initialFocusRef,
   backdropClassName = 'zc-backdrop',
   panelClassName,
@@ -163,10 +203,7 @@ export function DialogShell({
     if (!panel) return undefined;
     const active = document.activeElement;
     if (!(active instanceof HTMLElement) || !panel.contains(active)) {
-      const preferred = initialFocusRef?.current
-        ?? panel.querySelector<HTMLElement>('[data-dialog-initial-focus]')
-        ?? focusableElements(panel)[0]
-        ?? panel;
+      const preferred = initialFocusRef?.current ?? selectDialogInitialFocus(panel);
       preferred.focus({ preventScroll: true });
     }
     const restoreFocus = restoreFocusRef.current;
@@ -198,8 +235,13 @@ export function DialogShell({
     const panel = panelRef.current;
     if (!panel || !(event.target instanceof Node) || !panel.contains(event.target)) return;
     if (event.defaultPrevented || event.nativeEvent.isComposing) return;
-    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && onSaveShortcut && !dismissDisabled) {
-      event.preventDefault(); event.stopPropagation(); onSaveShortcut(); return;
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && !dismissDisabled) {
+      if (event.shiftKey && onSaveContinueShortcut) {
+        event.preventDefault(); event.stopPropagation(); onSaveContinueShortcut(); return;
+      }
+      if (!event.shiftKey && onSaveShortcut) {
+        event.preventDefault(); event.stopPropagation(); onSaveShortcut(); return;
+      }
     }
     if (event.key === 'Escape') {
       if (shouldDismissDialog(event.key, closeOnEscape, !!onDismiss, dismissDisabled)) {

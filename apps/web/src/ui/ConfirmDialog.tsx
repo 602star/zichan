@@ -22,10 +22,13 @@ export function ConfirmDialog(props: {
   children: ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
+  secondaryLabel?: string;
+  secondaryTone?: 'normal' | 'danger';
   tone?: 'normal' | 'danger';
   busy?: boolean;
   confirmDisabled?: boolean;
   onConfirm: () => void | Promise<void>;
+  onSecondary?: () => void | Promise<void>;
   onCancel?: () => void;
 }) {
   const titleId = useId();
@@ -44,12 +47,12 @@ export function ConfirmDialog(props: {
     };
   }, []);
 
-  function confirm() {
+  function runAction(action: () => void | Promise<void>) {
     if (busy || confirmFlight.current) return;
     setActionError('');
     let result: void | Promise<void>;
     try {
-      result = props.onConfirm();
+      result = action();
     } catch (error) {
       setActionError(confirmDialogErrorMessage(error));
       return;
@@ -69,8 +72,13 @@ export function ConfirmDialog(props: {
     });
   }
 
+  function confirm() {
+    runAction(props.onConfirm);
+  }
+
   /* Confirm button uses a filled accent/danger look regardless of base button style. */
   const confirmCls = props.tone === 'danger' ? 'zc-btn zc-btn--danger zc-btn--filled' : 'zc-btn zc-btn--primary';
+  const secondaryCls = props.secondaryTone === 'danger' ? 'zc-btn zc-btn--danger' : 'zc-btn';
   const confirmExtraStyle = busy || props.confirmDisabled ? { opacity: 0.65 } : undefined;
 
   return (
@@ -83,21 +91,28 @@ export function ConfirmDialog(props: {
       panelStyle={panel}
 
       header={<>
-        <div id={titleId} style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', marginBottom: 10 }}>{props.title}</div>
+        <h2 id={titleId} className="zc-modal-title">{props.title}</h2>
       </>}
       footer={<>
         {actionError && (
-          <div role="alert" style={{ marginTop: 'var(--sp-3)', color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', lineHeight: 1.55, overflowWrap: 'anywhere' }}>
+          <div role="alert" style={{ marginBottom: 'var(--sp-3)', color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', lineHeight: 1.55, overflowWrap: 'anywhere' }}>
             操作失败：{actionError}
           </div>
         )}
-        <div className="zc-confirm-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--sp-2)', marginTop: 18 }}>
-          {props.cancelLabel !== undefined && props.onCancel && (
-            <button data-dialog-initial-focus onClick={props.onCancel} disabled={busy} className="zc-btn">{props.cancelLabel}</button>
+        <div className={`zc-confirm-actions${props.secondaryLabel && props.onSecondary ? ' has-secondary' : ''}`}>
+          {props.secondaryLabel && props.onSecondary && (
+            <button type="button" onClick={() => runAction(props.onSecondary!)} disabled={busy} className={secondaryCls}>
+              {props.secondaryLabel}
+            </button>
           )}
-          <button data-dialog-initial-focus={!props.onCancel ? '' : undefined} onClick={confirm} disabled={busy || props.confirmDisabled} className={confirmCls} style={confirmExtraStyle}>
-            {busy ? '处理中…' : props.confirmLabel ?? '确定'}
-          </button>
+          <div className="zc-confirm-actions-main">
+            {props.cancelLabel !== undefined && props.onCancel && (
+              <button type="button" data-dialog-initial-focus onClick={props.onCancel} disabled={busy} className="zc-btn">{props.cancelLabel}</button>
+            )}
+            <button type="button" data-dialog-initial-focus={!props.onCancel ? '' : undefined} onClick={confirm} disabled={busy || props.confirmDisabled} className={confirmCls} style={confirmExtraStyle}>
+              {busy ? '处理中…' : props.confirmLabel ?? '确定'}
+            </button>
+          </div>
         </div>
       </>}
     >

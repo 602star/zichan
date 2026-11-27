@@ -15,6 +15,10 @@ describe('物品清单筛选与导出', () => {
     const rows = buildFixed(snap, '2026-11-16');
     const filters = { ...defaultFixedFilters(), year: '2024', locationId: 'home', categoryId: item.categoryId, status: 'stored' as const };
     expect(filterFixedInventory(rows, filters, preferences).map((row) => row.id)).toContain(item.id);
+    const parentId = snap.fixedAssetCategories.find((row) => row.id === item.categoryId)?.parentId;
+    if (parentId) {
+      expect(filterFixedInventory(rows, { ...filters, categoryId: parentId }, preferences).map((row) => row.id)).toContain(item.id);
+    }
     expect(filterFixedInventory(rows, { ...filters, status: 'active' }, preferences).map((row) => row.id)).not.toContain(item.id);
     expect(filterFixedInventory(rows, { ...filters, year: '2025' }, preferences).map((row) => row.id)).not.toContain(item.id);
     const orphan = { ...rows[0]!, id: 'part-with-archived-host', isComponent: true, costOwnerId: 'archived-host' };

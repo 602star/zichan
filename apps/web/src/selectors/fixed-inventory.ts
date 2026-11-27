@@ -10,7 +10,7 @@ export function filterFixedInventory(items: FixedCardVM[], filters: FixedInvento
     if (!archivedOnly && item.isComponent && item.costOwnerId && items.some((owner) => owner.id === item.costOwnerId)) return false;
     if (filters.status === 'terminal' && !['sold', 'scrapped', 'retired', 'gifted'].includes(item.raw.status) || filters.status === 'active' && item.raw.status !== 'active'
       || filters.status === 'stored' && item.raw.status !== 'stored') return false;
-    if (filters.categoryId !== 'all' && item.raw.categoryId !== filters.categoryId) return false;
+    if (filters.categoryId !== 'all' && item.raw.categoryId !== filters.categoryId && item.categoryParentId !== filters.categoryId) return false;
     if (filters.year !== 'all' && item.raw.purchaseDate.slice(0, 4) !== filters.year) return false;
     if (filters.locationId === 'unset' && item.raw.storageLocationId) return false;
     if (!['all', 'unset'].includes(filters.locationId) && !fixedLocationContains(preferences.locations, filters.locationId, item.raw.storageLocationId)) return false;

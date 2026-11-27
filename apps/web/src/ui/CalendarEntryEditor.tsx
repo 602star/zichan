@@ -1,4 +1,5 @@
-import { useEffect, useId, useState, type FormEvent } from 'react';
+import { X } from 'lucide-react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { CALENDAR_KIND_LABELS, CALENDAR_REPEAT_LABELS, calendarDayInfo, lunarCalendarDate, type CalendarEntry } from '@zichan/core';
 import { saveCalendarEntry } from '@zichan/db';
 import { useStore } from '../db/store.js';
@@ -24,8 +25,9 @@ export function CalendarEntryEditor({ initial, replaceOccurrence, onClose, onSav
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const linkedKey = (entry.transactionIds ?? []).join('\0');
   const id = useId();
+  const formRef = useRef<HTMLFormElement>(null);
   const dirty = JSON.stringify(entry) !== JSON.stringify(initial);
-  const patch = (value: Partial<CalendarEntry>) => setEntry(current => ({ ...current, ...value }));
+  const patch = (value: Partial<CalendarEntry>) => { setError(''); setEntry(current => ({ ...current, ...value })); };
   const close = () => {
     if (busy) return;
     if (dirty) { setConfirmDiscard(true); return; }
@@ -70,12 +72,20 @@ export function CalendarEntryEditor({ initial, replaceOccurrence, onClose, onSav
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setBusy(false); }
   }
-  return <DialogShell labelledBy={id} onDismiss={close} dismissDisabled={busy} panelClassName="zc-calendar-editor" panelStyle={{ width: 'min(700px, 100%)', background: 'var(--surface)' }}
-    header={<div className="zc-calendar-editor-heading"><h2 id={id}>{initial.createdAt ? '编辑日历事项' : '新增日历事项'}</h2><button type="button" className="zc-btn" onClick={close} disabled={busy}>取消</button></div>}
-    footer={<div className="zc-calendar-editor-actions"><span>保存到当前账本，联网后按现有规则同步</span><button className="zc-btn zc-btn--primary" type="submit" form={`${id}-form`} disabled={busy}>{busy ? '保存中…' : '保存事项'}</button></div>}>
-    <form id={`${id}-form`} className="zc-calendar-form" onSubmit={event => void submit(event)}>
-      {error && <p className="zc-calendar-error" role="alert">{error}</p>}
-      <label className="zc-field">标题<input autoFocus className="zc-input" required maxLength={200} value={entry.title} onChange={event => patch({ title: event.target.value })} /></label>
+  return <DialogShell labelledBy={id} onDismiss={close} dismissDisabled={busy} onSaveShortcut={() => formRef.current?.requestSubmit()} panelClassName="zc-calendar-editor" panelStyle={{ width: 'min(700px, 100%)', background: 'var(--surface)' }}
+    header={<div className="zc-modal-header"><h2 id={id} className="zc-modal-title">{initial.createdAt ? '编辑日历事项' : '新增日历事项'}</h2><button type="button" className="zc-dialog-close" aria-label="关闭" title="关闭 (Esc)" onClick={close} disabled={busy}><X size={20} aria-hidden="true" /></button></div>}
+    footer={<>
+      {error && <div className="zc-modal-footer-error" role="alert">{error}</div>}
+      <div className="zc-calendar-editor-actions">
+        <span>保存到当前账本，联网后按现有规则同步</span>
+        <div className="zc-modal-footer-actions">
+          <button type="button" className="zc-btn" onClick={close} disabled={busy}>取消</button>
+          <button className="zc-btn zc-btn--primary" type="submit" form={`${id}-form`} title="保存事项 (Ctrl+Enter)" disabled={busy}>{busy ? '保存中…' : '保存事项'}</button>
+        </div>
+      </div>
+    </>}>
+    <form ref={formRef} id={`${id}-form`} className="zc-calendar-form" onSubmit={event => void submit(event)}>
+      <label className="zc-field">标题<input className="zc-input" required maxLength={200} value={entry.title} onChange={event => patch({ title: event.target.value })} /></label>
       <div className="zc-calendar-form-pair">
         <label className="zc-field">类型<select className="zc-select" value={entry.kind} onChange={event => {
           const kind = event.target.value as CalendarEntry['kind'];

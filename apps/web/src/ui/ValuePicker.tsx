@@ -6,7 +6,7 @@ import { useCompactView } from './useCompactView.js';
 export interface ValueOption { value: string; label: string; group?: string; disabled?: boolean; }
 
 /** Native keyboard selection on desktop; searchable paper choices on a phone. */
-export function ValuePicker({ id, name, label, value, options, onChange, disabled, required }: {
+export function ValuePicker({ id, name, label, value, options, onChange, disabled, required, invalid, describedBy }: {
   id: string;
   name?: string;
   label: string;
@@ -15,6 +15,8 @@ export function ValuePicker({ id, name, label, value, options, onChange, disable
   onChange: (value: string) => void;
   disabled?: boolean;
   required?: boolean;
+  invalid?: boolean;
+  describedBy?: string;
 }) {
   const compact = useCompactView();
   const listId = useId();
@@ -29,11 +31,11 @@ export function ValuePicker({ id, name, label, value, options, onChange, disable
   useEffect(() => {
     if (open && keyboard.current) list.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]:not(:disabled), button:not(:disabled)')?.focus({ preventScroll: true });
   }, [open]);
-  if (!compact) return <select id={id} name={name} aria-label={label} className="zc-select" value={value} disabled={disabled} required={required} onChange={(event) => onChange(event.target.value)}>
+  if (!compact) return <select id={id} name={name} aria-label={label} aria-invalid={invalid || undefined} aria-describedby={describedBy} className="zc-select" value={value} disabled={disabled} required={required} onChange={(event) => onChange(event.target.value)}>
     {options.map((option) => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>)}
   </select>;
   return <>
-    <button ref={trigger} id={id} type="button" role="combobox" aria-label={label} aria-haspopup="listbox" aria-controls={open ? listId : undefined} aria-expanded={open} aria-required={required} data-value={value} className="zc-select zc-value-picker-trigger" disabled={disabled} onClick={(event) => { keyboard.current = event.detail === 0; setSearch(''); setOpen(true); }}>
+    <button ref={trigger} id={id} type="button" role="combobox" aria-label={label} aria-haspopup="listbox" aria-controls={open ? listId : undefined} aria-expanded={open} aria-required={required} aria-invalid={invalid || undefined} aria-describedby={describedBy} data-value={value} className="zc-select zc-value-picker-trigger" disabled={disabled} onClick={(event) => { keyboard.current = event.detail === 0; setSearch(''); setOpen(true); }}>
       <span>{selected?.label ?? '请选择'}</span><ChevronDown size={18} aria-hidden="true" />
     </button>
     {open && <ActionSheet title={`选择${label}`} onClose={close} actions={[]}>

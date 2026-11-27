@@ -108,6 +108,7 @@ export interface FixedCardVM {
   installedComponents: string[];
   category: string;
   categoryParent: string;
+  categoryParentId?: string;
   tag: string;
   sold: boolean;
   status: string;
@@ -256,6 +257,7 @@ export function buildFixed(snap: Snapshot, asOf = localToday(), today = todayIn(
       installedComponents: snap.fixedAssets.filter((row) => row.role === 'component' && componentHostAt(row.id, snap.fixedEvents, asOf) === asset.id).map((row) => row.name),
       category: category?.name ?? '待分类',
       categoryParent: parent?.name ?? category?.name ?? '其他物品',
+      categoryParentId: parent?.id ?? category?.parentId,
       tag: asset.tag ?? '',
       sold: cost.basis === 'final',
       status: FIXED_STATUS_LABELS[asset.status],

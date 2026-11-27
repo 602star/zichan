@@ -1,3 +1,4 @@
+import { Camera, Paperclip } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { AttachmentDraftData } from '../db/attachment-storage.js';
 import { AttachmentPreview } from './AttachmentPreview.js';
@@ -14,6 +15,7 @@ export function LedgerAttachmentField({ id, rows, disabled, readFiles, load, rem
 }) {
   const [active, setActive] = useState<string>(), [file, setFile] = useState<File>();
   const [loading, setLoading] = useState(false), [error, setError] = useState('');
+  const [dragOver, setDragOver] = useState(false);
   const [pdfPages, setPdfPages] = useState<number>();
   const reader = useRef<AbortController>();
   const epoch = useRef(0), current = useRef(rows); current.current = rows;
@@ -40,12 +42,57 @@ export function LedgerAttachmentField({ id, rows, disabled, readFiles, load, rem
     } catch (cause) { if (epoch.current === at) { setError(cause instanceof Error ? cause.message : '无法读取这张附件，请重试或先下载附件。'); setActive(undefined); } }
     finally { if (epoch.current === at) setLoading(false); }
   };
-  return <div className="zc-ledger-attachments" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { if (!disabled && !active && event.dataTransfer.files.length) { event.preventDefault(); void readFiles(event.dataTransfer.files); } }} onPaste={(event) => { if (!disabled && !active && event.clipboardData.files.length) { event.preventDefault(); void readFiles(event.clipboardData.files); } }}>
-    <div className="zc-attachment-actions"><input id={id} aria-label="附件 / 图片" type="file" multiple disabled={disabled || !!active} onChange={(event) => { const input = event.currentTarget; void readFiles(input.files).finally(() => { input.value = ''; }); }} /><label className="zc-btn" htmlFor={`${id}-camera`}>拍照<input id={`${id}-camera`} hidden type="file" accept="image/*" capture="environment" disabled={disabled || !!active} onChange={(event) => { const input = event.currentTarget; void readFiles(input.files).finally(() => { input.value = ''; }); }} /></label></div>
-    <p className="zc-meta">可拖入文件，或在此粘贴截图。图片与 PDF 可直接提取信息，在本机处理。</p>
+  const isDisabled = disabled || !!active;
+  return <div
+    className="zc-ledger-attachments"
+    onDragOver={(event) => { event.preventDefault(); if (!isDisabled) setDragOver(true); }}
+    onDragLeave={() => setDragOver(false)}
+    onDrop={(event) => {
+      setDragOver(false);
+      if (!isDisabled && event.dataTransfer.files.length) {
+        event.preventDefault();
+        void readFiles(event.dataTransfer.files);
+      }
+    }}
+    onPaste={(event) => {
+      if (!isDisabled && event.clipboardData.files.length) {
+        event.preventDefault();
+        void readFiles(event.clipboardData.files);
+      }
+    }}
+  >
+    <div className="zc-attachment-dropzone-row">
+      <label className={`zc-attachment-dropzone${dragOver ? ' is-dragover' : ''}${isDisabled ? ' is-disabled' : ''}`} htmlFor={id}>
+        <input
+          id={id}
+          aria-label="附件 / 图片"
+          className="zc-sr-only"
+          type="file"
+          multiple
+          disabled={isDisabled}
+          onChange={(event) => { const input = event.currentTarget; void readFiles(input.files).finally(() => { input.value = ''; }); }}
+        />
+        <Paperclip size={16} aria-hidden="true" />
+        <span className="zc-attachment-dropzone-main">选择文件、拖入或粘贴截图</span>
+        <span className="zc-attachment-dropzone-note">图片 / PDF 支持本机识别</span>
+      </label>
+      <label className={`zc-btn zc-touch-only zc-attachment-camera-btn${isDisabled ? ' is-disabled' : ''}`} htmlFor={`${id}-camera`}>
+        <Camera size={16} aria-hidden="true" />
+        <span>拍照</span>
+        <input
+          id={`${id}-camera`}
+          className="zc-sr-only"
+          type="file"
+          accept="image/*"
+          capture="environment"
+          disabled={isDisabled}
+          onChange={(event) => { const input = event.currentTarget; void readFiles(input.files).finally(() => { input.value = ''; }); }}
+        />
+      </label>
+    </div>
     {error && <p role="alert" className="zc-entry-field-error">{error}</p>}
     {rows.map((row) => <div key={row.id} className="zc-attachment-item">
-      <div className="zc-attachment-item-header"><AttachmentPreview attachment={row} interactive alt={row.fileName} style={{ width: 80, height: 64, objectFit: 'cover', borderRadius: 'var(--r-sm)' }} /><div className="zc-attachment-item-info"><span>{row.fileName}</span><span className="zc-meta">{Math.ceil((row.sizeBytes ?? 0) / 1024)} KB · {active === row.id ? loading ? '正在读取图片' : '正在处理，尚未应用' : row.privacyReview ? (row.privacyReview.maskCount === 0 ? '已处理，图片未打码' : `已打码 ${row.privacyReview.maskCount ?? ''} 处`) : row.note?.startsWith('附件处理：') ? row.note.slice(5) : '尚未提取信息'}</span></div><div className="zc-attachment-actions">{download(row)}<button type="button" className="zc-btn" disabled={disabled || !!active} onClick={() => row.id && remove(row.id)}>移除</button>{['image', 'pdf'].includes(attachmentPreviewKind(row) ?? '') && <button type="button" className="zc-btn" disabled={disabled || !!active} onClick={() => void open(row)}>提取信息</button>}</div></div>
+      <div className="zc-attachment-item-header"><AttachmentPreview attachment={row} interactive alt={row.fileName} style={{ width: 80, height: 64, objectFit: 'cover', borderRadius: 'var(--r-sm)' }} /><div className="zc-attachment-item-info"><span>{row.fileName}</span><span className="zc-meta">{Math.ceil((row.sizeBytes ?? 0) / 1024)} KB · {active === row.id ? loading ? '正在读取图片' : '正在处理，尚未应用' : row.privacyReview ? (row.privacyReview.maskCount === 0 ? '已处理，图片未打码' : `已打码 ${row.privacyReview.maskCount ?? ''} 处`) : row.note?.startsWith('附件处理：') ? row.note.slice(5) : '尚未提取信息'}</span></div><div className="zc-attachment-actions">{download(row)}<button type="button" className="zc-btn" disabled={isDisabled} onClick={() => row.id && remove(row.id)}>移除</button>{['image', 'pdf'].includes(attachmentPreviewKind(row) ?? '') && <button type="button" className="zc-btn" disabled={isDisabled} onClick={() => void open(row)}>提取信息</button>}</div></div>
       {active === row.id && file && <AttachmentProcessing file={file} pdfPages={pdfPages} values={values} versions={versions} manual={manual} assets={assets} onClose={close} onApply={async (application) => { if (!current.current.some((item) => item.id === row.id)) throw new Error('附件已移除，请重新选择。'); await apply(row.id!, application); close(); }} />}
       {active === row.id && loading && <button type="button" className="zc-btn" onClick={close}>取消读取</button>}
     </div>)}

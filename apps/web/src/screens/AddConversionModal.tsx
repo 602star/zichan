@@ -37,6 +37,7 @@ import { useStore } from '../db/store.js';
 import { useSnapshot } from '../db/snapshot.js';
 import { financialPostings } from '../db/derive.js';
 import { amount as fmtAmount, significant } from '../format.js';
+import { sanitizeNumericInput } from '../form-number.js';
 import { conversionRateText } from '../selectors/convert.js';
 import { conversionGap, suggestFeeValue } from '../conversion-entry.js';
 import { moduleCurrencyId } from '../currencyPreferences.js';
@@ -226,8 +227,9 @@ class ConversionFieldError extends Error {
 }
 
 function positiveInput(value: string, label: string, stepIndex?: number, feeId?: string): void {
-  if (!value.trim()) throw new ConversionFieldError(`请填写${label}`, label, stepIndex, feeId);
-  try { if (D(value).isFinite() && D(value).gt(0)) return; } catch { /* A field-specific message replaces Decimal's parser error. */ }
+  const cleaned = sanitizeNumericInput(value);
+  if (!cleaned) throw new ConversionFieldError(`请填写${label}`, label, stepIndex, feeId);
+  try { if (D(cleaned).isFinite() && D(cleaned).gt(0)) return; } catch { /* A field-specific message replaces Decimal's parser error. */ }
   throw new ConversionFieldError(`${label}必须是大于 0 的有效数字`, label, stepIndex, feeId);
 }
 
@@ -434,6 +436,8 @@ export function AddConversionModal({
   const code = (id: string) => assets.find((asset) => asset.id === id)?.code ?? '—';
   const quantity = (id: string, value: string) => fmtAmount(value, assets.find((asset) => asset.id === id)?.decimals ?? 8);
   const update = (index: number, patch: Partial<StepDraft>) => {
+    setErr(null);
+    setErrorField(null);
     setSteps((stored) => {
     const currentDrafts = stored.length ? stored : drafts;
     const current = currentDrafts[index]!;
@@ -760,6 +764,7 @@ export function AddConversionModal({
   return (
     <WorkspaceDialog
       navigationBlocked={draftState.dirty || !!draftState.pending}
+      onSaveShortcut={() => void save()}
       labelledBy={titleId}
       onDismiss={requestClose}
       dismissDisabled={saving}
@@ -767,19 +772,19 @@ export function AddConversionModal({
       panelStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 24, width: 980, maxHeight: '92vh', overflow: 'auto' }}
 
       header={<>
-        <div className="zc-modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
-          <div id={titleId} style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>{initial ? '编辑资产转换' : '新增资产转换'}</div>
-          <button type="button" data-dialog-initial-focus aria-label="关闭" title="关闭" onClick={requestClose} disabled={saving} style={iconButton}><X size={20} aria-hidden="true" /></button>
+        <div className="zc-modal-header">
+          <h2 id={titleId} className="zc-modal-title">{initial ? '编辑资产转换' : '新增资产转换'}</h2>
+          <button type="button" className="zc-dialog-close" aria-label="关闭" title="关闭 (Esc)" onClick={requestClose} disabled={saving}><X size={20} aria-hidden="true" /></button>
         </div>
       </>}
       footer={<>
         <div className="zc-modal-footer" style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 12 }}>
           {err && (
-            <div role="alert" style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', lineHeight: 1.6 }}>{err}</div>
+            <div role="alert" className="zc-modal-footer-error">{err}</div>
           )}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-            <button onClick={requestClose} disabled={saving} className="zc-btn">取消</button>
-            <button onClick={() => void save()} disabled={saving || creatingAssetCode !== null || completed.current} className="zc-btn zc-btn--primary" style={{ opacity: saving || creatingAssetCode !== null ? 0.6 : 1 }}>{saving || creatingAssetCode !== null ? '处理中…' : initial ? '预览影响' : compact ? '核对转换' : '保存转换'}</button>
+          <div className="zc-modal-footer-actions" style={{ justifyContent: 'flex-end' }}>
+            <button type="button" onClick={requestClose} disabled={saving} className="zc-btn">取消</button>
+            <button type="button" title="保存转换 (Ctrl+Enter)" onClick={() => void save()} disabled={saving || creatingAssetCode !== null || completed.current} className="zc-btn zc-btn--primary" style={{ opacity: saving || creatingAssetCode !== null ? 0.6 : 1 }}>{saving || creatingAssetCode !== null ? '处理中…' : initial ? '预览影响' : compact ? '核对转换' : '保存转换'}</button>
           </div>
         </div>
       </>}
@@ -822,22 +827,24 @@ export function AddConversionModal({
         {presetNotice && <div style={{ color: presetNotice.includes('回退') ? 'var(--warning)' : 'var(--fg-muted)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginBottom: 14 }}>{presetNotice}</div>}
 
         {!initial && (
-          <div style={{ border: '1px solid var(--border)', background: 'var(--surface-2)', padding: 12, marginBottom: 14 }}>
-            <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: 'var(--text-secondary)', marginBottom: 8 }}>常用目标资产</div>
-            <div className="zc-asset-preset-grid">
-              {ASSET_PRESETS.filter((row) => FEATURED_ASSET_PRESET_CODES.includes(row.code)).map(presetButton)}
+          <details className="zc-asset-preset-bar" open={!!assetPresetCode}>
+            <summary>常用目标资产 · 快速添加或填入目标资产</summary>
+            <div className="zc-asset-preset-bar-body">
+              <div className="zc-asset-preset-grid">
+                {ASSET_PRESETS.filter((row) => FEATURED_ASSET_PRESET_CODES.includes(row.code)).map(presetButton)}
+              </div>
+              <details className="zc-asset-preset-more"><summary>更多常用资产</summary>
+                {ASSET_PRESET_GROUPS.map((group) => {
+                  const rows = ASSET_PRESETS.filter((row) => group.codes.includes(row.code) && !FEATURED_ASSET_PRESET_CODES.includes(row.code));
+                  return rows.length ? <div key={group.label}>
+                    <div className="zc-asset-preset-group-title">{group.label}</div>
+                    <div className="zc-asset-preset-grid">{rows.map(presetButton)}</div>
+                  </div> : null;
+                })}
+              </details>
+              <div style={{ marginTop: 8, fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>选择后只会补充可选资产，不会自动生成持仓、余额或交易。</div>
             </div>
-            <details className="zc-asset-preset-more"><summary>更多常用资产</summary>
-              {ASSET_PRESET_GROUPS.map((group) => {
-                const rows = ASSET_PRESETS.filter((row) => group.codes.includes(row.code) && !FEATURED_ASSET_PRESET_CODES.includes(row.code));
-                return rows.length ? <div key={group.label}>
-                  <div className="zc-asset-preset-group-title">{group.label}</div>
-                  <div className="zc-asset-preset-grid">{rows.map(presetButton)}</div>
-                </div> : null;
-              })}
-            </details>
-            <div style={{ marginTop: 8, fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>选择后只会补充可选资产，不会自动生成持仓、余额或交易。</div>
-          </div>
+          </details>
         )}
 
         {(type === 'sell' || snap.costState) && (
@@ -869,23 +876,23 @@ export function AddConversionModal({
             <div key={stepIndex} data-conversion-step={stepIndex} className="zc-conversion-step">
               <div className="zc-conversion-step-heading">
                 <b style={{ fontSize: 'var(--fs-body)' }}>步骤 {stepIndex + 1}</b>
-                {drafts.length > 1 && <button onClick={() => setSteps(drafts.filter((_, index) => index !== stepIndex))} style={dangerLink}>删除步骤</button>}
+                {drafts.length > 1 && <button type="button" onClick={() => setSteps(drafts.filter((_, index) => index !== stepIndex))} style={dangerLink}>删除步骤</button>}
               </div>
               <div style={{ padding: 14 }}>
                 {errorField?.stepIndex === stepIndex && <p role="alert" style={{ color: 'var(--negative)' }}>{errorField.message}</p>}
                 <div className="zc-conversion-step-grid">
                   <Field label="来源资产">{assetSelect('来源资产', step.fromAssetId, (value) => update(stepIndex, { fromAssetId: value }))}</Field>
                   <Field label="来源数量">
-                    <input aria-label="来源数量" className="zc-input" inputMode="decimal" value={step.fromInput} onChange={(event) => update(stepIndex, { fromInput: event.target.value })} />
-                    <select aria-label="来源数量口径" className="zc-select" value={step.sourceAmountMode} onChange={(event) => update(stepIndex, { sourceAmountMode: event.target.value as ConversionSourceAmountMode })} style={subSelect}>
+                    <input aria-label="来源数量" className="zc-input" inputMode="decimal" value={step.fromInput} onChange={(event) => update(stepIndex, { fromInput: event.target.value })} onBlur={(event) => { const cleaned = sanitizeNumericInput(event.target.value); if (cleaned !== event.target.value) update(stepIndex, { fromInput: cleaned }); }} />
+                    <select aria-label="来源数量口径" className="zc-select zc-conversion-subselect" value={step.sourceAmountMode} onChange={(event) => update(stepIndex, { sourceAmountMode: event.target.value as ConversionSourceAmountMode })}>
                       <option value="trade_principal">成交本金 · 手续费另付</option>
                       <option value="account_debit">账户实扣 · 已包含来源费</option>
                     </select>
                   </Field>
                   <Field label="目标资产">{assetSelect('目标资产', step.toAssetId, (value) => update(stepIndex, { toAssetId: value }), true)}</Field>
                   <Field label="目标数量">
-                    <input aria-label="目标数量" className="zc-input" inputMode="decimal" value={step.toInput} onChange={(event) => update(stepIndex, { toInput: event.target.value })} />
-                    <select aria-label="目标数量口径" className="zc-select" value={step.targetAmountMode} onChange={(event) => update(stepIndex, { targetAmountMode: event.target.value as ConversionTargetAmountMode })} style={subSelect}>
+                    <input aria-label="目标数量" className="zc-input" inputMode="decimal" value={step.toInput} onChange={(event) => update(stepIndex, { toInput: event.target.value })} onBlur={(event) => { const cleaned = sanitizeNumericInput(event.target.value); if (cleaned !== event.target.value) update(stepIndex, { toInput: cleaned }); }} />
+                    <select aria-label="目标数量口径" className="zc-select zc-conversion-subselect" value={step.targetAmountMode} onChange={(event) => update(stepIndex, { targetAmountMode: event.target.value as ConversionTargetAmountMode })}>
                       <option value="account_credit">实际到账 · 已扣目标费</option>
                       <option value="trade_gross">成交毛额 · 尚未扣目标费</option>
                     </select>
@@ -919,7 +926,7 @@ export function AddConversionModal({
                 <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: step.fees.length ? 8 : 0 }}>
                     <b style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>手续费</b>
-                    <button onClick={() => addFee(stepIndex)} className="zc-btn zc-btn--sm">+ 添加手续费</button>
+                    <button type="button" onClick={() => addFee(stepIndex)} className="zc-btn zc-btn--sm">+ 添加手续费</button>
                   </div>
                   {step.fees.map((fee) => {
                     const forcedAsset = fee.side === 'source' ? step.fromAssetId : fee.side === 'target' ? step.toAssetId : fee.assetId;
@@ -928,12 +935,12 @@ export function AddConversionModal({
                       <div className="zc-conversion-fee-grid" key={fee.id} data-fee-id={fee.id} style={{ display: 'grid', gridTemplateColumns: '170px 1fr 1fr 1fr 38px', gap: 8, alignItems: 'end', marginTop: 8 }}>
                         <Field label="扣费位置"><select aria-label="扣费位置" className="zc-select" value={fee.side} onChange={(event) => updateFee(stepIndex, fee.id, { side: event.target.value as FeeSide })}><option value="source">来源资产</option><option value="target">目标资产扣除</option><option value="third">第三资产另付</option></select></Field>
                         <Field label="手续费资产">{assetSelect('手续费资产', forcedAsset, (value) => updateFee(stepIndex, fee.id, { assetId: value }), true, fee.side !== 'third')}</Field>
-                        <Field label="手续费数量"><input aria-label="手续费数量" className="zc-input" inputMode="decimal" value={fee.amount} onChange={(event) => updateFee(stepIndex, fee.id, { amount: event.target.value })} /></Field>
-                        <Field label={`折算 ${code(effectiveBookCurrencyId)}`}>{forcedAsset === effectiveBookCurrencyId ? <div>直接采用手续费数量 {fee.amount || '—'}</div> : <input aria-label="手续费折算" className="zc-input" inputMode="decimal" value={fee.valueInBase} onChange={(event) => updateFee(stepIndex, fee.id, { valueInBase: event.target.value })} placeholder="填写、采用建议值或保留未知" />}
+                        <Field label="手续费数量"><input aria-label="手续费数量" className="zc-input" inputMode="decimal" value={fee.amount} onChange={(event) => updateFee(stepIndex, fee.id, { amount: event.target.value })} onBlur={(event) => { const cleaned = sanitizeNumericInput(event.target.value); if (cleaned !== event.target.value) updateFee(stepIndex, fee.id, { amount: cleaned }); }} /></Field>
+                        <Field label={`折算 ${code(effectiveBookCurrencyId)}`}>{forcedAsset === effectiveBookCurrencyId ? <div>直接采用手续费数量 {fee.amount || '—'}</div> : <input aria-label="手续费折算" className="zc-input" inputMode="decimal" value={fee.valueInBase} onChange={(event) => updateFee(stepIndex, fee.id, { valueInBase: event.target.value })} onBlur={(event) => { const cleaned = sanitizeNumericInput(event.target.value); if (cleaned !== event.target.value) updateFee(stepIndex, fee.id, { valueInBase: cleaned }); }} placeholder="填写、采用建议值或保留未知" />}
                           {forcedAsset !== effectiveBookCurrencyId && fee.valueInBase && fee.confirmedFingerprint !== valueFingerprint && <div role="alert">条件已变化，请重新确认。<button type="button" className="zc-btn zc-btn--sm" onClick={() => updateFee(stepIndex, fee.id, { valueInBase: fee.valueInBase })}>确认原折算值</button><button type="button" className="zc-btn zc-btn--sm" onClick={() => updateFee(stepIndex, fee.id, { valueInBase: '' })}>清除折算值</button></div>}
                           {forcedAsset !== effectiveBookCurrencyId && (suggestion ? <button type="button" className="zc-btn zc-btn--sm" title={suggestion.basis} onClick={() => updateFee(stepIndex, fee.id, { valueInBase: suggestion.value, valueEvidence: { source: suggestion.priceMarkIds?.length ? 'price_mark' : 'transaction', priceMarkIds: suggestion.priceMarkIds ?? [], quoteDate: suggestion.quoteDate, explanation: suggestion.basis } })}>采用折算值 {significant(suggestion.value)} · {suggestion.basis}</button> : <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>暂无可用汇率，请填写实际折算价值。</span>)}
                         </Field>
-                        <button aria-label="删除手续费" title="删除手续费" onClick={() => update(stepIndex, { fees: step.fees.filter((row) => row.id !== fee.id) })} style={{ ...iconButton, color: 'var(--negative)', marginBottom: 2 }}>×</button>
+                        <button type="button" aria-label="删除手续费" title="删除手续费" onClick={() => update(stepIndex, { fees: step.fees.filter((row) => row.id !== fee.id) })} style={{ ...iconButton, color: 'var(--negative)', marginBottom: 2 }}>×</button>
                         {fee.side === 'third' && <Field label="手续费扣款账户">{accountSelect('手续费扣款账户', fee.accountId, (value) => updateFee(stepIndex, fee.id, { accountId: value }), fee.assetId)}</Field>}
                         <Field label="手续费备注（可选）"><input aria-label="手续费备注" className="zc-input" value={fee.note} onChange={(event) => updateFee(stepIndex, fee.id, { note: event.target.value })} /></Field>
                       </div>
@@ -976,7 +983,7 @@ export function AddConversionModal({
           );
         })}
 
-        <button onClick={() => {
+        <button type="button" onClick={() => {
           const previous = drafts.at(-1)!;
           const next = emptyStep(effectiveBookCurrencyId, previous.toAssetId || effectiveBookCurrencyId);
           next.accountFromId = previous.accountToId;
@@ -1001,10 +1008,17 @@ export function AddConversionModal({
         <details><summary>当前记录</summary><p>{initial?.chain.title || '无标题'} · {initial?.chain.date} {initial?.chain.time}</p>{initial?.steps.map((step, index) => <p key={step.id}>步骤 {index + 1}：{step.fromAmount} {code(step.fromAssetId)} → {step.toAmount} {code(step.toAssetId)}{step.platform ? ` · ${step.platform}` : ''}{step.note ? ` · ${step.note}` : ''}</p>)}</details>
         <details><summary>恢复的草稿</summary><p>{title || '无标题'} · {date} {time}</p>{steps.map((step, index) => <p key={step.id}>步骤 {index + 1}：{step.fromInput} {code(step.fromAssetId)} → {step.toInput} {code(step.toAssetId)}{step.platform ? ` · ${step.platform}` : ''}{step.note ? ` · ${step.note}` : ''}</p>)}</details>
       </ConfirmDialog>}
-      {closeRequested && <ConfirmDialog title="保留未完成的转换？" confirmLabel="保留草稿并关闭" cancelLabel="继续填写"
-        onCancel={() => setCloseRequested(false)} onConfirm={async () => { await draftState.keep(); onClose(); }}>
-        草稿会加密保存在当前账号、当前账本的本机存储中。
-        <button type="button" style={{ ...dangerLink, display: 'block', marginTop: 12 }} onClick={() => void draftState.finish().then(onClose).catch((cause: unknown) => setErr(String(cause)))}>放弃草稿并关闭</button>
+      {closeRequested && <ConfirmDialog
+        title="保留未完成的转换？"
+        confirmLabel="保留草稿并关闭"
+        secondaryLabel="放弃草稿并关闭"
+        secondaryTone="danger"
+        cancelLabel="继续填写"
+        onCancel={() => setCloseRequested(false)}
+        onSecondary={async () => { await draftState.finish(); onClose(); }}
+        onConfirm={async () => { await draftState.keep(); onClose(); }}
+      >
+        草稿会加密保存在当前账号、当前账本的本机存储中；也可以直接放弃本次草稿并关闭。
       </ConfirmDialog>}
       {mobileReview && <ConfirmDialog title="核对转换" confirmLabel="确认保存转换" cancelLabel="返回修改" busy={saving} onCancel={() => setMobileReview(null)} onConfirm={async () => { await persist(mobileReview); setMobileReview(null); }}>
         <p>{mobileReview.chain.title || '资产转换'} · {mobileReview.chain.date}</p>
@@ -1069,7 +1083,20 @@ export function AddConversionModal({
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
-  return <div><label className="zc-label">{label}</label>{children}</div>;
+  return (
+    <div className="zc-conversion-field">
+      <span
+        className="zc-label"
+        onClick={(event) => {
+          const control = event.currentTarget.parentElement?.querySelector<HTMLElement>('input:not([disabled]), select:not([disabled]), textarea:not([disabled])');
+          control?.focus();
+        }}
+      >
+        {label}
+      </span>
+      {children}
+    </div>
+  );
 }
 
 function Metric({ label, value, strong = false }: { label: string; value: string; strong?: boolean }) {
@@ -1078,5 +1105,4 @@ function Metric({ label, value, strong = false }: { label: string; value: string
 
 const iconButton = iconBtn;
 const dangerLink = linkDanger;
-const subSelect = { marginTop: 5, height: 30, paddingTop: 3, paddingBottom: 3, fontSize: 'var(--fs-caption)' } as const;
 const lotChip = (active: boolean) => ({ display: 'inline-flex', gap: 6, alignItems: 'center', border: '1px solid var(--border)', background: active ? 'var(--accent-soft)' : 'var(--surface)', color: active ? 'var(--accent)' : 'var(--fg-muted)', padding: '6px 9px', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)', cursor: 'pointer' } as const);

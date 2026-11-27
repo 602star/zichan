@@ -1,5 +1,5 @@
 import { X } from 'lucide-react';
-import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { D, localToday, type Asset, type Transaction, type TransactionTemplate } from '@zichan/core';
 import {
   deleteFormDraft,
@@ -18,6 +18,7 @@ import { useStore } from '../db/store.js';
 import { recommendExpenseCategory, type CategoryRecommendation } from '../category-defaults.js';
 import { readCategoryDefaultPreferences } from '../category-default-preferences.js';
 import { useCategoryDefault } from '../use-category-default.js';
+import { sanitizeNumericInput } from '../form-number.js';
 
 export type QuickExpenseCategoryOption = FieldOption;
 
@@ -50,17 +51,6 @@ interface QuickExpenseModalProps {
   onSave: (draft: QuickExpenseDraft) => Promise<void>;
   onClose: () => void;
 }
-
-const field: CSSProperties = {
-  width: '100%',
-  boxSizing: 'border-box',
-  border: '1px solid var(--border)',
-  borderRadius: 'var(--r-md)',
-  background: 'var(--surface)',
-  color: 'var(--text-primary)',
-  padding: '11px 13px',
-  fontSize: 'var(--fs-body)',
-};
 
 const QUICK_EXPENSE_DRAFT_KEY = formDraftKey('quick-expense');
 
@@ -121,6 +111,7 @@ export function recommendQuickExpense(
   const recommendation = recommendExpenseCategory(transactions, categories, { date: localToday(now), time: now.toTimeString().slice(0, 5) }, readCategoryDefaultPreferences());
   return { ...recommendation, label: recommendation.source === 'time' ? recommendation.description ?? recommendation.label : recommendation.label };
 }
+
 export function QuickExpenseModal({
   assets,
   categories,
@@ -283,6 +274,7 @@ export function QuickExpenseModal({
   function applyTemplate(template: TransactionTemplate) {
     touched.current = true;
     categoryProtected.current = true;
+    setError('');
     setCategory(template.category);
     setDescription(template.description ?? template.name);
     setAssetId(activeAssets.some((asset) => asset.id === template.assetId) ? template.assetId! : defaultAssetId);
@@ -293,6 +285,7 @@ export function QuickExpenseModal({
   function applyRecommendation() {
     touched.current = true;
     categoryProtected.current = false;
+    setError('');
     setCategory(recommendation.category);
     setDescription(recommendation.description ?? '');
     amountRef.current?.focus();
@@ -301,8 +294,10 @@ export function QuickExpenseModal({
   async function submit() {
     if (assetPresetBusy) return;
     setError('');
+    const cleanedAmount = sanitizeNumericInput(amount);
+    if (cleanedAmount !== amount) setAmount(cleanedAmount);
     try {
-      if (!D(amount || 0).gt(0)) {
+      if (!D(cleanedAmount || 0).gt(0)) {
         setError('请输入大于 0 的支出金额');
         amountRef.current?.focus();
         return;
@@ -318,7 +313,7 @@ export function QuickExpenseModal({
     }
     setBusy(true);
     try {
-      await onSave({ amount, category, description: description.trim() || undefined, date, time, assetId });
+      await onSave({ amount: cleanedAmount, category, description: description.trim() || undefined, date, time, assetId });
       saved.current = true;
       await draftAutosave.stopAndDrain();
       await deleteFormDraft(QUICK_EXPENSE_DRAFT_KEY).catch(() => undefined);
@@ -330,36 +325,42 @@ export function QuickExpenseModal({
     }
   }
 
+  async function discardAndClose() {
+    saved.current = true;
+    await draftAutosave.stopAndDrain();
+    await deleteFormDraft(QUICK_EXPENSE_DRAFT_KEY).catch(() => undefined);
+    onClose();
+  }
+
   return (
     <DialogShell
       labelledBy={titleId}
       onDismiss={requestClose}
       dismissDisabled={busy}
+      onSaveShortcut={() => void submit()}
       initialFocusRef={amountRef}
       panelClassName="zc-quick-expense-dialog"
       panelStyle={{ width: 'min(560px, calc(100vw - 24px))', maxHeight: 'calc(100vh - 24px)', overflow: 'auto' }}
 
       header={<>
-        <div style={{ display: 'flex', alignItems: 'start', justifyContent: 'space-between', gap: 16 }}>
+        <div className="zc-modal-header">
           <div>
-            <h2 id={titleId} style={{ margin: 0, fontSize: 'var(--fs-heading)' }}>记一笔支出</h2>
+            <h2 id={titleId} className="zc-modal-title">记一笔支出</h2>
             <div style={{ marginTop: 5, color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>只填金额即可保存，其他内容均有默认值。</div>
           </div>
-          <button type="button" aria-label="关闭快速记账" onClick={requestClose} disabled={busy} style={{ border: 0, background: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--fs-heading)', cursor: 'pointer' }}><X size={20} aria-hidden="true" /></button>
+          <button type="button" className="zc-dialog-close" aria-label="关闭快速记账" title="关闭 (Esc)" onClick={requestClose} disabled={busy}><X size={20} aria-hidden="true" /></button>
         </div>
       </>}
       footer={<>
-        {error && <div role="alert" style={{ marginTop: 14, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{error}</div>}
+        {error && <div role="alert" className="zc-modal-footer-error">{error}</div>}
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
+        <div className="zc-modal-footer zc-modal-footer--end">
           <button type="button" className="zc-btn" onClick={requestClose} disabled={busy}>取消</button>
-          <button type="button" className="zc-btn zc-btn--primary" onClick={() => void submit()} disabled={busy || assetPresetBusy}>{busy ? '保存中…' : '保存支出'}</button>
+          <button type="button" className="zc-btn zc-btn--primary" title="保存支出 (Ctrl+Enter)" onClick={() => void submit()} disabled={busy || assetPresetBusy}>{busy ? '保存中…' : '保存支出'}</button>
         </div>
       </>}
     >
       <div className="zc-quick-expense-body">
-
-
         {!initialTemplate && recommendation.category && (
           <div data-testid="quick-expense-recommendation" aria-live="polite" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 14, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--accent-soft)', color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}>
             <span>
@@ -380,18 +381,23 @@ export function QuickExpenseModal({
         {draftReady && dirty && <FormDraftStatus status={draftAutosave.status} />}
 
         <label style={{ display: 'block', marginTop: 22 }}>
-          <span style={{ display: 'block', marginBottom: 7, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>支出金额</span>
+          <span className="zc-label">支出金额</span>
           <span style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <input
               ref={amountRef}
               data-dialog-initial-focus
+              className="zc-input zc-quick-expense-amount"
               aria-label="支出金额"
+              aria-invalid={error.includes('金额') || undefined}
               inputMode="decimal"
               value={amount}
-              onChange={(event) => { touched.current = true; setAmount(event.target.value); }}
+              onChange={(event) => { touched.current = true; setError(''); setAmount(event.target.value); }}
+              onBlur={(event) => {
+                const cleaned = sanitizeNumericInput(event.target.value);
+                if (cleaned !== event.target.value) setAmount(cleaned);
+              }}
               onKeyDown={(event) => { if (event.key === 'Enter') void submit(); }}
               placeholder="0.00"
-              style={{ ...field, width: 'auto', flex: '1 1 0', minWidth: 0, fontSize: 'var(--fs-hero)', fontWeight: 'var(--fw-bold)', padding: '14px 16px' }}
             />
             {selectedAsset && <output className="zc-amount-currency" aria-label="当前币种">{selectedAsset.name || selectedAsset.code}</output>}
           </span>
@@ -399,24 +405,15 @@ export function QuickExpenseModal({
 
         {expenseTemplates.length > 0 && (
           <div role="group" aria-label="常用支出" style={{ marginTop: 18 }}>
-            <div style={{ marginBottom: 8, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>常用支出</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            <div className="zc-label">常用支出</div>
+            <div className="zc-multiselect-chips">
               {expenseTemplates.map((template) => (
                 <button
                   key={template.id}
                   type="button"
                   onClick={() => applyTemplate(template)}
                   aria-pressed={category === template.category && description === (template.description ?? template.name)}
-                  style={{
-                    border: '1px solid var(--border)',
-                    borderRadius: 'var(--r-pill)',
-                    background: category === template.category && description === (template.description ?? template.name) ? 'var(--accent-soft)' : 'var(--surface)',
-                    color: category === template.category && description === (template.description ?? template.name) ? 'var(--accent)' : 'var(--fg-muted)',
-                    padding: '8px 12px',
-                    fontSize: 'var(--fs-caption)',
-                    fontWeight: 'var(--fw-medium)',
-                    cursor: 'pointer',
-                  }}
+                  className={`zc-multiselect-chip${category === template.category && description === (template.description ?? template.name) ? ' is-selected' : ''}`}
                 >
                   {template.name}
                 </button>
@@ -427,33 +424,35 @@ export function QuickExpenseModal({
 
         <div className="zc-quick-expense-main" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12, marginTop: 18 }}>
           <div>
-            <label htmlFor="quick-expense-category" style={{ display: 'block', marginBottom: 7, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>分类</label>
+            <label htmlFor="quick-expense-category" className="zc-label">分类</label>
             <CategoryPicker
               fieldId="quick-expense-category"
               name="category"
               value={category}
               options={categories}
               defaultShowHidden={categoryShowHiddenDefault}
+              invalid={error.includes('分类')}
               onChange={(value) => {
                 touched.current = true;
                 categoryProtected.current = true;
+                setError('');
                 setCategory(value);
               }}
             />
           </div>
           <label>
-            <span style={{ display: 'block', marginBottom: 7, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>备注（可选）</span>
-            <input aria-label="支出备注" value={description} onChange={(event) => { touched.current = true; setDescription(event.target.value); }} placeholder="例如：午餐" style={field} />
+            <span className="zc-label">备注（可选）</span>
+            <input className="zc-input" aria-label="支出备注" value={description} onChange={(event) => { touched.current = true; setDescription(event.target.value); }} placeholder="例如：午餐" />
           </label>
         </div>
 
         <details style={{ marginTop: 16, color: 'var(--text-secondary)' }}>
           <summary style={{ cursor: 'pointer', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>更多信息</summary>
           <div className="zc-quick-expense-split" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, marginTop: 12 }}>
-            <label><span style={{ display: 'block', marginBottom: 6, fontSize: 'var(--fs-meta)' }}>日期</span><DateTimeInput aria-label="支出日期" type="date" value={date} onChange={(next) => { touched.current = true; setDate(next); }} required style={field} /></label>
-            <label><span style={{ display: 'block', marginBottom: 6, fontSize: 'var(--fs-meta)' }}>时间</span><DateTimeInput aria-label="支出时间" type="time" value={time} onChange={(next) => { touched.current = true; setTime(next); }} style={field} /></label>
-            <label style={{ gridColumn: '1 / -1' }}><span style={{ display: 'block', marginBottom: 6, fontSize: 'var(--fs-meta)' }}>币种</span>
-              <select aria-label="支出币种" value={assetId} disabled={assetPresetBusy} onChange={(event) => void chooseAsset(event.target.value)} style={field}>
+            <label><span className="zc-label">日期</span><DateTimeInput className="zc-input" aria-label="支出日期" type="date" value={date} onChange={(next) => { touched.current = true; setDate(next); }} required /></label>
+            <label><span className="zc-label">时间</span><DateTimeInput className="zc-input" aria-label="支出时间" type="time" value={time} onChange={(next) => { touched.current = true; setTime(next); }} /></label>
+            <label style={{ gridColumn: '1 / -1' }}><span className="zc-label">币种</span>
+              <select className="zc-select" aria-label="支出币种" value={assetId} disabled={assetPresetBusy} onChange={(event) => void chooseAsset(event.target.value)}>
                 {activeAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.code}</option>)}
                 {availablePresetGroups.map((group) => <optgroup key={group.label} label={`添加${group.label}`}>
                   {group.presets.map((preset) => <option key={preset.code} value={`__add_asset_preset__:${preset.code}`}>{preset.code} · {preset.name}</option>)}
@@ -463,20 +462,22 @@ export function QuickExpenseModal({
           </div>
         </details>
 
-
         {closeOpen && (
           <ConfirmDialog
             title="关闭未保存支出"
             confirmLabel="保留草稿并关闭"
+            secondaryLabel="放弃修改并关闭"
+            secondaryTone="danger"
             cancelLabel="继续编辑"
             onCancel={() => setCloseOpen(false)}
+            onSecondary={discardAndClose}
             onConfirm={async () => {
               await draftAutosave.drainPending();
               await saveFormDraft(QUICK_EXPENSE_DRAFT_KEY, currentValues, {});
               onClose();
             }}
           >
-            当前支出还没有保存。关闭后会保留自动草稿，下次打开时可以继续填写。
+            当前支出还没有保存。保留草稿下次打开可继续填写，或直接放弃本次修改。
           </ConfirmDialog>
         )}
       </div>
