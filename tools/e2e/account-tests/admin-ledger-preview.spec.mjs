@@ -36,8 +36,9 @@ async function listen(options = {}) {
   return instance;
 }
 
-async function signIn(page, origin, username = 'owner') {
-  await page.goto(`${origin}/e2e-private-entry/admin/`);
+async function signIn(page, origin, username = 'owner', accessPath = 'e2e-private-entry') {
+  const response = await page.goto(`${origin}${accessPath ? `/${accessPath}` : ''}/admin/`);
+  expect(response?.status()).toBe(200);
   await page.getByLabel('管理账号用户名').fill(username);
   await page.getByLabel('管理账号密码').fill(password);
   await page.getByRole('button', { name: '登录管理后台', exact: true }).click();
@@ -145,8 +146,9 @@ test('a private-mode account is refused with a reason instead of an empty ledger
     await registerAccount(origin, 'owner', password, { ownerSetupToken: setupToken });
     await registerAccount(origin, 'private-user', userPassword);
 
-    await signIn(page, origin);
-    await page.goto(`${origin}/e2e-private-entry/admin/preview?username=private-user`);
+    const accessPath = server.adminAccessPath();
+    await signIn(page, origin, 'owner', accessPath);
+    await page.goto(`${origin}${accessPath ? `/${accessPath}` : ''}/admin/preview?username=private-user`);
     await page.getByLabel('查看原因').fill('排查同步问题');
     await page.getByRole('button', { name: '打开预览' }).click();
 
