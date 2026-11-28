@@ -812,7 +812,7 @@ export function budgetCategoryForm(snap: Snapshot, selectedMonth = currentDate()
     title: '分类预算',
     fields: [
       { key: 'month', label: '月份', type: 'month', half: true, defaultValue: month, placeholder: '2026-07', required: true },
-      { key: 'category', label: '二级分类', type: 'category', half: true, options: categoryOptions(snap.categories, 'expense', { leafOnly: true, includeHidden: true }), ...categoryPickerPreference(snap), required: true },
+      { key: 'category', label: '支出分类', type: 'category', half: true, allowParentSelection: true, options: categoryOptions(snap.categories, 'expense', { leafOnly: true, includeHidden: true }), ...categoryPickerPreference(snap), required: true, hint: '可选择一级分类汇总统计全部子分类，或选择具体二级分类。' },
       { key: 'plannedAmount', label: '预算金额', type: 'number', half: true, required: true },
       { key: 'assetId', label: '预算币种', type: 'select', half: true, defaultValue: defaultAssetId, options: settlementOpts(snap, defaultAssetId), required: true },
       { key: 'rolloverMode', label: '结转方式', type: 'select', half: true, options: [

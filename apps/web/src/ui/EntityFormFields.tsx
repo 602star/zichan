@@ -73,6 +73,7 @@ export interface FieldDef {
   /** Keep a field in 更多信息 even when required or populated. */
   keepInMore?: boolean;
   required?: boolean;
+  allowParentSelection?: boolean;
   categoryShowHiddenDefault?: boolean;
   hidden?: boolean;
   visibleWhen?: (values: Record<string, string>) => boolean;
@@ -154,6 +155,7 @@ export function FormField(props: {
           value={value}
           options={options}
           allowEmpty={f.allowEmpty}
+          allowParentSelection={f.allowParentSelection}
           defaultShowHidden={f.categoryShowHiddenDefault}
           invalid={hasError}
           describedBy={describedBy}

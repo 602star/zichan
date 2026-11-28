@@ -660,6 +660,9 @@ function buildBudgetRows(
       && !D(reportingEffect(snap, t).expenseDelta).isZero()
     );
   const budgets = snap.budgetCategories.filter((b) => !b.isDeleted);
+  const categoryLevels = categoryLevelIndex(snap.categories);
+  const matchesBudgetCategory = (categoryId: string, budgetCategoryId: string) =>
+    categoryId === budgetCategoryId || categoryLevels.rootOf(categoryId) === budgetCategoryId;
   const byMonthCategory = new Map(budgets.map((budget) => [`${budget.month}\0${budget.category}`, budget]));
   type NativeBudget = { carryIn: ReturnType<typeof D>; actual: ReturnType<typeof D>; remaining: ReturnType<typeof D>; carryOut: ReturnType<typeof D>; known: boolean };
   const nativeCache = new Map<string, NativeBudget>();
@@ -687,7 +690,7 @@ function buildBudgetRows(
     if (aggregates) {
       for (const row of aggregates.filter((aggregate) =>
         aggregate.direction === 'expense'
-        && aggregate.category === budget.category
+        && matchesBudgetCategory(aggregate.category, budget.category)
         && aggregate.reportDate.slice(0, 7) === budget.month
       )) {
         const native = sum(row.amounts);
@@ -699,7 +702,7 @@ function buildBudgetRows(
       for (const transaction of expenseRows.filter((row) => transactionEffectDate(snap, row).slice(0, 7) === budget.month)) {
         const effect = reportingEffect(snap, transaction);
         const direction = D(effect.expenseDelta).isNegative() ? -1 : 1;
-        for (const categoryRow of effect.categoryRows.filter((row) => row.categoryId === budget.category)) {
+        for (const categoryRow of effect.categoryRows.filter((row) => matchesBudgetCategory(row.categoryId, budget.category))) {
           const converted = convert(categoryRow.amount, effect.reportAssetId, budget.assetId, effect.reportDate);
           if (!converted) known = false;
           else nativeActuals.push(converted.mul(direction));

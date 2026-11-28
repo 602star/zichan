@@ -175,7 +175,12 @@ function normalizeValues(fields: FieldDef[], values: Record<string, string>, cha
   for (const f of fields) {
     if (f.type !== 'select' && f.type !== 'category' && f.type !== 'multiselect') continue;
     const options = fieldOptions(f, next);
-    const optionValues = new Set(options.map((o) => o.value));
+    const optionValues = new Set([
+      ...options.map((o) => o.value),
+      ...(f.type === 'category' && f.allowParentSelection
+        ? options.map((o) => o.parentId).filter((id): id is string => Boolean(id))
+        : []),
+    ]);
     const current = next[f.key] ?? '';
     if (f.type === 'select' || f.type === 'category') {
       const shouldReset = (current && !optionValues.has(current)) || (!!changedKey && !!f.resetWhen?.includes(changedKey));

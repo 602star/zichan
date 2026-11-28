@@ -810,13 +810,26 @@ async function validateTransactionWrite(
   }
 }
 
+async function budgetCategory(
+  driver: SqlDriver,
+  id: string,
+  field: string,
+  allowInactiveReferences = false,
+): Promise<Category> {
+  const category = await getEntity<Category>(driver, TABLES.categories, id);
+  if (!isAllowedReference(category, allowInactiveReferences)) fail(`分类不存在或已归档：${id}`, field);
+  if (category.type !== 'expense') fail('预算只支持支出分类', field);
+  if (!category.parentId) return category;
+  return leafCategory(driver, id, 'expense', field, allowInactiveReferences);
+}
+
 async function validateBudgetWrite(
   driver: SqlDriver,
   budget: BudgetCategory,
   allowInactiveReferences = false,
 ): Promise<void> {
   if (!/^\d{4}-\d{2}$/.test(budget.month)) fail('预算月份必须使用 YYYY-MM', 'month');
-  await leafCategory(driver, budget.category, 'expense', 'category', allowInactiveReferences);
+  await budgetCategory(driver, budget.category, 'category', allowInactiveReferences);
   const asset = await activeAsset(driver, budget.assetId, 'assetId', allowInactiveReferences);
   const amount = decimal(budget.plannedAmount, '预算金额', 'plannedAmount');
   if (amount.lt(0)) fail('预算金额不能小于 0', 'plannedAmount');

@@ -465,6 +465,48 @@ describe('buildTransactions', () => {
     expect(buildBudgetMonth(s, '2026-02')[0]).toMatchObject({ carryIn: '40', available: '140', actual: '120', remaining: '20', carryOut: '20' });
     expect(buildBudgetMonth(s, '2026-04')[0]).toMatchObject({ carryIn: '-30', available: '70', actual: '0', remaining: '70', carryOut: '70' });
   });
+
+  it('supports parent expense categories in budget form and rolls up child spending', () => {
+    const s = makeSnapshot();
+    const spec = budgetCategoryForm(s, '2026-03');
+    const categoryField = spec.fields.find((f) => f.key === 'category')!;
+    expect(categoryField.allowParentSelection).toBe(true);
+
+    const food = s.categories.find((c) => c.id === 'food')!;
+    const foodParentId = food.parentId!;
+    const siblingFood = {
+      id: 'food_coffee_test', name: '咖啡', type: 'expense' as const, parentId: foodParentId, isActive: true, isSystem: false,
+      createdAt: '', updatedAt: '', version: 1, isDeleted: false,
+    };
+    s.categories = [...s.categories, siblingFood];
+
+    s.budgetCategories = [{
+      id: 'b-food-parent', month: '2026-03', category: foodParentId, plannedAmount: '300', assetId: s.ids.gbp, rolloverMode: 'none',
+      createdAt: '', updatedAt: '', version: 1, isDeleted: false,
+    }];
+    s.transactions = [
+      makeTransaction({ id: 't1', date: '2026-03-05', type: 'expense', category: food.id, amount: '80', assetId: s.ids.gbp }),
+      makeTransaction({ id: 't2', date: '2026-03-08', type: 'expense', category: siblingFood.id, amount: '55', assetId: s.ids.gbp }),
+      makeTransaction({ id: 't3', date: '2026-03-09', type: 'expense', category: 'shopping', amount: '200', assetId: s.ids.gbp }),
+    ];
+
+    expect(buildBudgetMonth(s, '2026-03')[0]).toMatchObject({
+      category: foodParentId,
+      planned: '300',
+      actual: '135',
+      remaining: '165',
+      over: false,
+    });
+    expect(buildBudgetMonthFromAggregates(s, '2026-03', [
+      { direction: 'expense', category: food.id, reportAssetId: s.ids.gbp, reportDate: '2026-03-05', amounts: ['80'] },
+      { direction: 'expense', category: siblingFood.id, reportAssetId: s.ids.gbp, reportDate: '2026-03-08', amounts: ['55'] },
+      { direction: 'expense', category: 'shopping', reportAssetId: s.ids.gbp, reportDate: '2026-03-09', amounts: ['200'] },
+    ])[0]).toMatchObject({
+      category: foodParentId,
+      actual: '135',
+      remaining: '165',
+    });
+  });
 });
 
 describe('ledger mode forms', () => {

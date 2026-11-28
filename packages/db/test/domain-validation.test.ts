@@ -102,6 +102,28 @@ describe('unified domain validation', () => {
     await store.close();
   });
 
+  it('allows budgets on both parent and leaf expense categories while rejecting income categories', async () => {
+    const store = await openLedger();
+    const refs = await seed(store);
+    const incomeRoot = await store.categories.put({
+      ...base('income-root'), name: '职业收入', type: 'income', isActive: true,
+    } satisfies Category);
+
+    const parentBudget = await store.budgetCategories.put({
+      ...base('budget-parent'), month: '2026-07', category: refs.root.id, plannedAmount: '1200', assetId: refs.asset.id, rolloverMode: 'none',
+    });
+    const leafBudget = await store.budgetCategories.put({
+      ...base('budget-leaf'), month: '2026-07', category: refs.leaf.id, plannedAmount: '400', assetId: refs.asset.id, rolloverMode: 'none',
+    });
+    expect(parentBudget.category).toBe(refs.root.id);
+    expect(leafBudget.category).toBe(refs.leaf.id);
+
+    await expect(store.budgetCategories.put({
+      ...base('budget-income'), month: '2026-07', category: incomeRoot.id, plannedAmount: '500', assetId: refs.asset.id, rolloverMode: 'none',
+    })).rejects.toThrow('预算只支持支出分类');
+    await store.close();
+  });
+
   it('rejects a third category level and reports it during import preflight', async () => {
     const store = await openLedger();
     const refs = await seed(store);
