@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { round, systemCategory, type Category } from '@zichan/core';
-import { budgetCategoryForm, categoryForm, gameRecordForm, payeeForm, scheduledTransactionForm, transactionForm, transactionSplitForm, transactionTemplateForm } from '../src/forms.js';
+import { budgetCategoryForm, categoryForm, dcaPlanForm, gameRecordForm, payeeForm, scheduledTransactionForm, transactionForm, transactionSplitForm, transactionTemplateForm } from '../src/forms.js';
 import {
   buildAccountLedger,
   buildBudgetMonth,
@@ -506,6 +506,22 @@ describe('buildTransactions', () => {
       actual: '135',
       remaining: '165',
     });
+  });
+
+  it('enables asset presets on DCA plan target/base fields and rejects identical assets', () => {
+    const s = makeSnapshot();
+    const spec = dcaPlanForm(s);
+    expect(spec.fields.find((f) => f.key === 'targetAssetId')?.assetPresetOptions).toBe(true);
+    expect(spec.fields.find((f) => f.key === 'baseCurrencyAssetId')?.assetPresetOptions).toBe(true);
+    expect(spec.fields.find((f) => f.key === 'timezone')?.section).toBe('more');
+    expect(spec.validate?.({
+      name: 'BTC 定投',
+      targetAssetId: s.ids.gbp,
+      baseCurrencyAssetId: s.ids.gbp,
+      plannedAmount: '100',
+      anchorDate: '2026-07-01',
+      timezone: 'Asia/Shanghai',
+    })).toMatchObject({ targetAssetId: '目标资产与投入币种不能相同' });
   });
 });
 

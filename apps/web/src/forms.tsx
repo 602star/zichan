@@ -313,24 +313,30 @@ export function priceMarkForm(snap: Snapshot): EntityFormSpec<PriceMark> {
 
 export function dcaPlanForm(snap: Snapshot): EntityFormSpec<DcaPlan> {
   const asOf = currentDate();
+  const investmentCurrencyId = moduleCurrencyId(snap.setting, 'investment');
+  const targetAssetOpts = [...snap.assets.filter((a) => !a.isDeleted)]
+    .sort((a, b) => Number(a.id === investmentCurrencyId) - Number(b.id === investmentCurrencyId)
+      || Number(a.type === 'fiat') - Number(b.type === 'fiat'))
+    .map((a) => ({ value: a.id, label: a.name && a.name !== a.code ? `${a.code} · ${a.name}` : a.code }));
   return {
     title: '定投计划',
+    moreInitiallyOpen: false,
     fields: [
-      { key: 'name', label: '名称', type: 'text', half: true, required: true },
-      { key: 'targetAssetId', label: '目标资产', type: 'select', half: true, options: assetOpts(snap), required: true },
-      { key: 'baseCurrencyAssetId', label: '投入币种', type: 'select', half: true, options: settlementOpts(snap, moduleCurrencyId(snap.setting, 'investment')), required: true },
-      { key: 'plannedAmount', label: '计划金额', type: 'number', half: true, required: true },
-      { key: 'frequency', label: '频率', type: 'select', half: true, options: DCA_FREQ },
-      { key: 'status', label: '状态', type: 'select', half: true, options: DCA_STATUS },
+      { key: 'name', label: '名称', type: 'text', half: true, placeholder: '如 BTC 每周定投', required: true },
+      { key: 'targetAssetId', label: '目标资产', type: 'select', half: true, options: targetAssetOpts, assetPresetOptions: true, required: true, hint: '下拉可直接启用常用加密/外币预设；基金或 ETF 可先点「新建资产」。' },
+      { key: 'baseCurrencyAssetId', label: '投入币种', type: 'select', half: true, options: settlementOpts(snap, investmentCurrencyId), assetPresetOptions: true, defaultValue: investmentCurrencyId, required: true },
+      { key: 'plannedAmount', label: '每期计划金额', type: 'number', half: true, required: true },
+      { key: 'frequency', label: '频率', type: 'select', half: true, defaultValue: 'monthly', options: DCA_FREQ },
       { key: 'anchorDate', label: '计划起始日', type: 'date', half: true, defaultValue: asOf, required: true },
-      { key: 'anchorMode', label: '月度锚点', type: 'select', half: true, defaultValue: 'calendar_day', options: [
+      { key: 'status', label: '状态', type: 'select', half: true, defaultValue: 'active', options: DCA_STATUS },
+      { key: 'anchorMode', label: '月度锚点', type: 'select', half: true, section: 'more', defaultValue: 'calendar_day', options: [
         { value: 'calendar_day', label: '固定日期（短月取月末）' },
         { value: 'month_end', label: '每月最后一天' },
       ] },
-      { key: 'timezone', label: '计划时区', type: 'text', half: true, defaultValue: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai', required: true },
-      { key: 'reminderDaysBefore', label: '提前提醒（天）', type: 'number', half: true, defaultValue: '3' },
-      { key: 'defaultPath', label: '默认路径', type: 'text', half: true, placeholder: 'GBP → USDT → BTC' },
-      { key: 'note', label: '备注', type: 'text', half: true },
+      { key: 'reminderDaysBefore', label: '提前提醒（天）', type: 'number', half: true, section: 'more', defaultValue: '3' },
+      { key: 'timezone', label: '计划时区', type: 'text', half: true, section: 'more', defaultValue: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai', required: true },
+      { key: 'defaultPath', label: '默认路径', type: 'text', half: true, section: 'more', placeholder: 'CNY → USDT → BTC' },
+      { key: 'note', label: '备注', type: 'textarea', section: 'more' },
     ],
     toValues: (p) => ({
       name: p.name, targetAssetId: p.targetAssetId, baseCurrencyAssetId: p.baseCurrencyAssetId,
@@ -348,6 +354,9 @@ export function dcaPlanForm(snap: Snapshot): EntityFormSpec<DcaPlan> {
     }) as DcaPlan,
     validate: (v) => {
       const errors: Record<string, string> = {};
+      if (v.targetAssetId && v.baseCurrencyAssetId && v.targetAssetId === v.baseCurrencyAssetId) {
+        errors.targetAssetId = '目标资产与投入币种不能相同';
+      }
       if (!D(v.plannedAmount || '0').gt(0)) errors.plannedAmount = '计划金额必须大于 0';
       if (!isValidDay(v.anchorDate || '')) errors.anchorDate = '计划起始日无效';
       try {
