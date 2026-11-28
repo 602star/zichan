@@ -1,3 +1,4 @@
+import { ChevronDown, Download } from 'lucide-react';
 import { accountSessionStorage } from '../account-storage.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { componentCostOwnerAt, fixedAssetAttributedCost, isDateInRange, gameRecordReportingPostings, traceChain, D, localToday, parseFixedOperatingCost, type DateRange, type QueryCursor } from '@zichan/core';
@@ -304,7 +305,7 @@ export function Reports() {
     setPdfBusy(true);
     try {
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      downloadReportPdf(`zichan-${tab}-${rangeFilePart(effectiveRange)}.pdf`, {
+      await downloadReportPdf(`zichan-${tab}-${rangeFilePart(effectiveRange)}.pdf`, {
         title: `有本 · ${tabLabel}`,
         range: rangeLabel(effectiveRange),
         table: reportTable,
@@ -384,74 +385,27 @@ export function Reports() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-      <div className="zc-report-tabs" style={{ display: 'flex', gap: 8 }}>
-        {TABS.map(([id, label]) => (
-          (!compactView || ['transactions', 'fixed', 'season'].includes(id) || tab === id) && <button key={id} type="button" aria-pressed={tab === id} onClick={() => { setTab(id); setExportMenuOpen(false); }} className={`zc-tab${tab === id ? ' is-active' : ''}`}>{compactView ? ({ transactions: '收支', fixed: '物品', season: '游戏' } as Record<string, string>)[id] ?? label : label}</button>
-        ))}
-        {compactView && <button type="button" className="zc-btn" onClick={() => setReportPickerOpen(true)}>更多报表</button>}
-      </div>
-      {/* Filtering semantics, separated: the range stays in `DateRangeBar`, and
-          the drill-down is a breadcrumb on the same row — it names the level that
-          is actually filtering, not just an × to undo it. */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
-        <DateRangeBar value={dateRange} anchor={asOfDate} onChange={(next) => {
-          setRanges((current) => ({ ...current, [tab]: next }));
-          clearCategoryDrill();
-          if (tab === 'transactions') setTransactionDetailRange(next);
-        }} />
-        {tab === 'transactions' && (selectedParent || selectedChild) && (
-          <nav className="zc-drill-crumbs" aria-label="分类下钻">
-            <button
-              type="button"
-              className="zc-drill-crumb"
-              aria-label="退回到全部支出"
-              onClick={() => {
-                clearCategoryDrill();
-                setTransactionDetailRange(transactionRange);
-              }}
-            >
-              全部支出
-            </button>
-            <span aria-hidden="true">›</span>
-            {selectedChild ? (
-              <button type="button" className="zc-drill-crumb" aria-label={`退回一级：${categoryLabel(selectedParent, snap.categories)}`} onClick={stepBackToParent}>
-                {categoryLabel(selectedParent, snap.categories)}
-              </button>
-            ) : (
-              <b className="zc-drill-crumb is-current">{categoryLabel(selectedParent, snap.categories)}</b>
-            )}
-            {selectedChild && (
-              <>
-                <span aria-hidden="true">›</span>
-                <b className="zc-drill-crumb is-current">{categoryLabel(selectedChild, snap.categories)}</b>
-              </>
-            )}
-          </nav>
-        )}
-      </div>
-      {baseSnap && <LedgerCutoffNotice snap={baseSnap} />}
-      {tab === 'transactions' && (
-        <ReportSummaryStrip
-          comparison={comparison}
-          formatAmount={(value) => reportCurrency.formatReport(value)}
-          formatSignedAmount={(value) => reportCurrency.formatSignedReport(value)}
-        />
-      )}
-      {/* One export entry. The six old buttons were six parallel ways to ask the
-          same question, which is why the numbers kept sliding below the fold. */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-        <div className="zc-menu" ref={exportMenuRef}>
+      <div className="zc-report-topbar">
+        <div className="zc-report-tabs" style={{ display: 'flex', gap: 8 }}>
+          {TABS.map(([id, label]) => (
+            (!compactView || ['transactions', 'fixed', 'season'].includes(id) || tab === id) && <button key={id} type="button" aria-pressed={tab === id} onClick={() => { setTab(id); setExportMenuOpen(false); }} className={`zc-tab${tab === id ? ' is-active' : ''}`}>{compactView ? ({ transactions: '收支', fixed: '物品', season: '游戏' } as Record<string, string>)[id] ?? label : label}</button>
+          ))}
+          {compactView && <button type="button" className="zc-btn" onClick={() => setReportPickerOpen(true)}>更多报表</button>}
+        </div>
+        <div className="zc-menu zc-report-export-menu" ref={exportMenuRef}>
           <button
             ref={exportTriggerRef}
             type="button"
-            className="zc-btn zc-btn--outline"
+            className="zc-btn zc-btn--outline zc-report-export-btn"
             /* Distinct from the header's backup export, which is also labelled 导出. */
             aria-label="导出报表"
             aria-haspopup="true"
             aria-expanded={exportMenuOpen}
             onClick={() => setExportMenuOpen((open) => !open)}
           >
-            导出
+            <Download size={15} aria-hidden="true" />
+            <span>导出</span>
+            <ChevronDown size={14} aria-hidden="true" />
           </button>
           {exportMenuOpen && compactView && <ActionSheet title="导出报表" description="导出当前报表及所选期间的数据。" onClose={() => setExportMenuOpen(false)} actions={[
             ...(tab === 'transactions' ? [{ label: detailExportBusy ? `导出明细中 ${detailExported}` : '明细 CSV', onSelect: () => { setExportMenuOpen(false); if (!detailExportBusy) void exportTransactionDetails(); } }] : []),
@@ -523,6 +477,53 @@ export function Reports() {
           )}
         </div>
       </div>
+      {/* Filtering semantics, separated: the range stays in `DateRangeBar`, and
+          the drill-down is a breadcrumb on the same row — it names the level that
+          is actually filtering, not just an × to undo it. */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
+        <DateRangeBar value={dateRange} anchor={asOfDate} onChange={(next) => {
+          setRanges((current) => ({ ...current, [tab]: next }));
+          clearCategoryDrill();
+          if (tab === 'transactions') setTransactionDetailRange(next);
+        }} />
+        {tab === 'transactions' && (selectedParent || selectedChild) && (
+          <nav className="zc-drill-crumbs" aria-label="分类下钻">
+            <button
+              type="button"
+              className="zc-drill-crumb"
+              aria-label="退回到全部支出"
+              onClick={() => {
+                clearCategoryDrill();
+                setTransactionDetailRange(transactionRange);
+              }}
+            >
+              全部支出
+            </button>
+            <span aria-hidden="true">›</span>
+            {selectedChild ? (
+              <button type="button" className="zc-drill-crumb" aria-label={`退回一级：${categoryLabel(selectedParent, snap.categories)}`} onClick={stepBackToParent}>
+                {categoryLabel(selectedParent, snap.categories)}
+              </button>
+            ) : (
+              <b className="zc-drill-crumb is-current">{categoryLabel(selectedParent, snap.categories)}</b>
+            )}
+            {selectedChild && (
+              <>
+                <span aria-hidden="true">›</span>
+                <b className="zc-drill-crumb is-current">{categoryLabel(selectedChild, snap.categories)}</b>
+              </>
+            )}
+          </nav>
+        )}
+      </div>
+      {baseSnap && <LedgerCutoffNotice snap={baseSnap} />}
+      {tab === 'transactions' && (
+        <ReportSummaryStrip
+          comparison={comparison}
+          formatAmount={(value) => reportCurrency.formatReport(value)}
+          formatSignedAmount={(value) => reportCurrency.formatSignedReport(value)}
+        />
+      )}
       {!!table.missingRateAssetCodes?.length && (
         <div className="zc-alert" role="status">
           缺少 {table.missingRateAssetCodes.join('、')} → {table.reportCurrencyCode} 的价格标记；相关记录显示为“未折算”，且不参与可比汇总。请在“数据管理 → 价格标记”补录。

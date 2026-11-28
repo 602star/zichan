@@ -1630,6 +1630,29 @@ button.zc-header-colophon-value.is-stale {
   padding-bottom: 8px;
 }
 
+.zc-report-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.zc-report-topbar > .zc-report-tabs {
+  flex: 1 1 auto;
+  padding-bottom: 0;
+}
+
+.zc-report-export-menu {
+  flex: 0 0 auto;
+}
+
+.zc-report-export-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .zc-report-tabs > button {
   flex: 0 0 auto;
 }

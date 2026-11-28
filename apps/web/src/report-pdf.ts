@@ -2,6 +2,9 @@ import type { Table } from './selectors/reports.js';
 
 const PAGE_WIDTH = 1240;
 const PAGE_HEIGHT = 1754;
+const RENDER_SCALE = 2; // 2480 × 3508 px ≈ 300 DPI on A4
+export const PDF_PIXEL_WIDTH = PAGE_WIDTH * RENDER_SCALE;
+export const PDF_PIXEL_HEIGHT = PAGE_HEIGHT * RENDER_SCALE;
 const PDF_WIDTH = 595.28;
 const PDF_HEIGHT = 841.89;
 const MARGIN = 60;
@@ -197,8 +200,22 @@ function drawTable(
   context.textAlign = 'left';
 }
 
+export interface PdfPageImage {
+  data: Uint8Array;
+  width: number;
+  height: number;
+  filter: 'FlateDecode' | 'DCTDecode';
+}
+
+async function deflateBytes(input: Uint8Array): Promise<Uint8Array> {
+  const stream = new Blob([input.slice().buffer as ArrayBuffer])
+    .stream()
+    .pipeThrough(new CompressionStream('deflate'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
 function jpegBytes(canvas: HTMLCanvasElement): Uint8Array {
-  const encoded = canvas.toDataURL('image/jpeg', 0.92).split(',')[1];
+  const encoded = canvas.toDataURL('image/jpeg', 0.96).split(',')[1];
   if (!encoded) throw new Error('PDF 页面图像编码失败');
   const binary = atob(encoded);
   const bytes = new Uint8Array(binary.length);
@@ -206,80 +223,109 @@ function jpegBytes(canvas: HTMLCanvasElement): Uint8Array {
   return bytes;
 }
 
-function renderPages(input: ReportPdfInput): Uint8Array[] {
+async function encodeCanvasPage(
+  canvas: HTMLCanvasElement,
+  context: CanvasRenderingContext2D,
+): Promise<PdfPageImage> {
+  const { width, height } = canvas;
+  if (typeof CompressionStream !== 'undefined') {
+    const { data } = context.getImageData(0, 0, width, height);
+    const rgb = new Uint8Array(width * height * 3);
+    for (let src = 0, dst = 0; src < data.length; src += 4, dst += 3) {
+      rgb[dst] = data[src]!;
+      rgb[dst + 1] = data[src + 1]!;
+      rgb[dst + 2] = data[src + 2]!;
+    }
+    return { data: await deflateBytes(rgb), width, height, filter: 'FlateDecode' };
+  }
+  return { data: jpegBytes(canvas), width, height, filter: 'DCTDecode' };
+}
+
+async function renderPages(input: ReportPdfInput): Promise<PdfPageImage[]> {
   const generatedAt = input.generatedAt ?? new Date();
   const firstCapacity = Math.max(1, Math.floor((PAGE_HEIGHT - FIRST_TABLE_TOP - HEADER_HEIGHT - 100) / ROW_HEIGHT));
   const nextCapacity = Math.max(1, Math.floor((PAGE_HEIGHT - NEXT_TABLE_TOP - HEADER_HEIGHT - 100) / ROW_HEIGHT));
   const pages = paginateReportRows(input.table.rows, firstCapacity, nextCapacity);
   const widths = columnWidths(input.table);
   const rightEdge = PAGE_WIDTH - MARGIN;
+  const rendered: PdfPageImage[] = [];
 
-  return pages.map((rows, pageIndex) => {
+  for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
+    const rows = pages[pageIndex]!;
     const canvas = document.createElement('canvas');
-    canvas.width = PAGE_WIDTH;
-    canvas.height = PAGE_HEIGHT;
+    canvas.width = PDF_PIXEL_WIDTH;
+    canvas.height = PDF_PIXEL_HEIGHT;
     const context = canvas.getContext('2d');
     if (!context) throw new Error('当前浏览器不能创建 PDF 绘图画布');
 
-    // Warm archival ledger paper canvas.
-    context.fillStyle = PDF_PAPER;
-    context.fillRect(0, 0, PAGE_WIDTH, PAGE_HEIGHT);
+    try {
+      context.scale(RENDER_SCALE, RENDER_SCALE);
 
-    // Top folio double hairline rule.
-    drawDoubleRule(context, MARGIN, rightEdge, 44);
+      // Warm archival ledger paper canvas.
+      context.fillStyle = PDF_PAPER;
+      context.fillRect(0, 0, PAGE_WIDTH, PAGE_HEIGHT);
 
-    if (pageIndex === 0) {
-      context.textBaseline = 'alphabetic';
-      context.textAlign = 'left';
-      context.fillStyle = PDF_INK;
-      context.font = `700 36px ${FONT_TEXT}`;
-      context.fillText(input.title, MARGIN, 102);
+      // Top folio double hairline rule.
+      drawDoubleRule(context, MARGIN, rightEdge, 44);
 
-      context.font = `18px ${FONT_TEXT}`;
-      context.fillStyle = PDF_INK_SECONDARY;
-      context.fillText(`统计范围：${input.range}`, MARGIN, 140);
-      context.fillText(`立册时间：${generatedAt.toLocaleString('zh-CN')} · 本位币：${input.table.reportCurrencyCode ?? '未设置'}`, MARGIN, 170);
+      if (pageIndex === 0) {
+        context.textBaseline = 'alphabetic';
+        context.textAlign = 'left';
+        context.fillStyle = PDF_INK;
+        context.font = `700 36px ${FONT_TEXT}`;
+        context.fillText(input.title, MARGIN, 102);
 
-      if (input.table.valuationComplete === false) {
-        context.fillStyle = PDF_WARNING;
-        context.fillText(`估值提示：缺少 ${(input.table.missingRateAssetCodes ?? []).join('、')} 的汇率标记`, MARGIN, 198);
+        context.font = `18px ${FONT_TEXT}`;
+        context.fillStyle = PDF_INK_SECONDARY;
+        context.fillText(`统计范围：${input.range}`, MARGIN, 140);
+        context.fillText(`立册时间：${generatedAt.toLocaleString('zh-CN')} · 本位币：${input.table.reportCurrencyCode ?? '未设置'}`, MARGIN, 170);
+
+        if (input.table.valuationComplete === false) {
+          context.fillStyle = PDF_WARNING;
+          context.fillText(`估值提示：缺少 ${(input.table.missingRateAssetCodes ?? []).join('、')} 的汇率标记`, MARGIN, 198);
+        }
+        drawFolioSeal(context, rightEdge, 68);
+      } else {
+        context.textBaseline = 'alphabetic';
+        context.textAlign = 'left';
+        context.fillStyle = PDF_INK_SECONDARY;
+        context.font = `700 20px ${FONT_TEXT}`;
+        context.fillText(`${input.title}（续页）`, MARGIN, 92);
+        context.textAlign = 'right';
+        context.font = `17px ${FONT_TEXT}`;
+        context.fillStyle = PDF_INK_TERTIARY;
+        context.fillText(`${input.range} · ${input.table.reportCurrencyCode ?? ''}`.trim(), rightEdge, 92);
+        context.textAlign = 'left';
       }
-      drawFolioSeal(context, rightEdge, 68);
-    } else {
-      context.textBaseline = 'alphabetic';
-      context.textAlign = 'left';
-      context.fillStyle = PDF_INK_SECONDARY;
-      context.font = `700 20px ${FONT_TEXT}`;
-      context.fillText(`${input.title}（续页）`, MARGIN, 92);
-      context.textAlign = 'right';
-      context.font = `17px ${FONT_TEXT}`;
+
+      drawTable(context, input.table, rows, pageIndex === 0 ? FIRST_TABLE_TOP : NEXT_TABLE_TOP, widths);
+
+      // Ledger footer rule & colophon pagination.
+      const footerRuleY = PAGE_HEIGHT - 74;
+      context.strokeStyle = PDF_RULE;
+      context.lineWidth = 1;
+      context.beginPath();
+      context.moveTo(MARGIN, footerRuleY);
+      context.lineTo(rightEdge, footerRuleY);
+      context.stroke();
+
       context.fillStyle = PDF_INK_TERTIARY;
-      context.fillText(`${input.range} · ${input.table.reportCurrencyCode ?? ''}`.trim(), rightEdge, 92);
+      context.font = `16px ${FONT_TEXT}`;
+      context.textBaseline = 'middle';
       context.textAlign = 'left';
+      context.fillText('有本 · 大福帳 · 个人收支与多资产总账', MARGIN, PAGE_HEIGHT - 44);
+      context.font = `16px ${FONT_NUM}`;
+      context.textAlign = 'right';
+      context.fillText(`第 ${pageIndex + 1} / ${pages.length} 页`, rightEdge, PAGE_HEIGHT - 44);
+      context.textAlign = 'left';
+
+      rendered.push(await encodeCanvasPage(canvas, context));
+    } finally {
+      canvas.width = 1;
+      canvas.height = 1;
     }
-
-    drawTable(context, input.table, rows, pageIndex === 0 ? FIRST_TABLE_TOP : NEXT_TABLE_TOP, widths);
-
-    // Ledger footer rule & colophon pagination.
-    const footerRuleY = PAGE_HEIGHT - 74;
-    context.strokeStyle = PDF_RULE;
-    context.lineWidth = 1;
-    context.beginPath();
-    context.moveTo(MARGIN, footerRuleY);
-    context.lineTo(rightEdge, footerRuleY);
-    context.stroke();
-
-    context.fillStyle = PDF_INK_TERTIARY;
-    context.font = `16px ${FONT_TEXT}`;
-    context.textBaseline = 'middle';
-    context.textAlign = 'left';
-    context.fillText('有本 · 大福帳 · 个人收支与多资产总账', MARGIN, PAGE_HEIGHT - 44);
-    context.font = `16px ${FONT_NUM}`;
-    context.textAlign = 'right';
-    context.fillText(`第 ${pageIndex + 1} / ${pages.length} 页`, rightEdge, PAGE_HEIGHT - 44);
-    context.textAlign = 'left';
-    return jpegBytes(canvas);
-  });
+  }
+  return rendered;
 }
 
 function ascii(value: string): Uint8Array {
@@ -297,7 +343,7 @@ function concat(parts: Uint8Array[]): Uint8Array {
   return result;
 }
 
-function pdfFromJpegs(images: Uint8Array[]): Uint8Array {
+export function buildPdfDocument(images: PdfPageImage[]): Uint8Array {
   const objectCount = 2 + images.length * 3;
   const objects = new Map<number, Uint8Array>();
   objects.set(1, ascii('<< /Type /Catalog /Pages 2 0 R >>'));
@@ -313,8 +359,8 @@ function pdfFromJpegs(images: Uint8Array[]): Uint8Array {
       + `/Resources << /XObject << /${imageName} ${imageId} 0 R >> >> /Contents ${contentId} 0 R >>`,
     ));
     objects.set(imageId, concat([
-      ascii(`<< /Type /XObject /Subtype /Image /Width ${PAGE_WIDTH} /Height ${PAGE_HEIGHT} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${image.byteLength} >>\nstream\n`),
-      image,
+      ascii(`<< /Type /XObject /Subtype /Image /Width ${image.width} /Height ${image.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /${image.filter} /Length ${image.data.byteLength} >>\nstream\n`),
+      image.data,
       ascii('\nendstream'),
     ]));
     const content = `q\n${PDF_WIDTH} 0 0 ${PDF_HEIGHT} 0 0 cm\n/${imageName} Do\nQ\n`;
@@ -344,13 +390,13 @@ function pdfFromJpegs(images: Uint8Array[]): Uint8Array {
   return concat(parts);
 }
 
-export function createReportPdf(input: ReportPdfInput): Blob {
-  const bytes = pdfFromJpegs(renderPages(input));
+export async function createReportPdf(input: ReportPdfInput): Promise<Blob> {
+  const bytes = buildPdfDocument(await renderPages(input));
   return new Blob([bytes.slice().buffer as ArrayBuffer], { type: 'application/pdf' });
 }
 
-export function downloadReportPdf(fileName: string, input: ReportPdfInput): void {
-  const blob = createReportPdf(input);
+export async function downloadReportPdf(fileName: string, input: ReportPdfInput): Promise<void> {
+  const blob = await createReportPdf(input);
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
