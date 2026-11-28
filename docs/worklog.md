@@ -2,6 +2,11 @@
 
 记录项目的重要改动、原因与验证方式，按时间倒序排列。旧条目反映当时状态；现行行为以对应主题文档和代码为准。历史条目提到的已删除文件仍可从 Git 历史查看。
 
+## 2026-11-28 — 准备 0.7.8 发布
+
+- 将工作区、桌面安装配置与锁文件统一升级到 0.7.8，整理自 0.7.7 起的用户可见变化。正式发布由版本标签触发跨平台构建、签名与产物验证。
+- 本机运行 `npm run ci`；Windows 不支持的 Linux 专项由发布流水线执行。
+
 ## 2026-11-28 — 附件 OCR 交互减负与单据字段防撑胖优化
 
 - **桌面端独立双栏提取弹窗与信息精简**：[`AttachmentProcessing.tsx`](apps/web/src/ui/AttachmentProcessing.tsx)、[`AttachmentReviewField.tsx`](apps/web/src/ui/AttachmentReviewField.tsx)、[`OrderPrivacyEditor.tsx`](apps/web/src/ui/OrderPrivacyEditor.tsx) 与 [`styles.css`](apps/web/src/styles.css) 将电脑端「提取信息」从主表单内联展开改为独立双栏弹窗（左栏图片与脱敏预览，右栏识别结果核对），消除主表单被撑爆及双底栏套娃；新增 [`partitionCaptureFields`](apps/web/src/order-capture/attachment-review.ts) 默认只列出实际识别出值的字段，未识别或与当前币种一致的字段统一收入「手动补填其他字段」折叠区；打码预览画布上方保留紧凑工具条（框选补充、撤销、对比原图、缩放），将逐条自动区域列表与像素坐标微调收进「遮盖区域明细与微调」折叠区，放弃确认统一复用 `ConfirmDialog`。
