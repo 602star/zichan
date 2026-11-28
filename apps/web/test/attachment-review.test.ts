@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseOrder } from '../src/order-capture/parser.js';
-import { changedCaptureFields, suggestedCaptureFields } from '../src/order-capture/attachment-review.js';
+import { changedCaptureFields, partitionCaptureFields, suggestedCaptureFields } from '../src/order-capture/attachment-review.js';
 const line = (text: string, y: number) => ({ id: String(y), text, score: .98, poly: [[0, y], [700, y], [700, y + 30], [0, y + 30]] as [number, number][] });
 const order = () => parseOrder([line('实付款：49.90 CNY', 100), line('付款时间：2026-11-25 18:42:00', 200), line('订单号：00001234567890', 300), line('运单号：SF1234567890', 400)]);
 describe('per-attachment field review', () => {
@@ -20,5 +20,17 @@ describe('per-attachment field review', () => {
     expect(changedCaptureFields({ amount: '10' }, { amount: '20' }, { amount: '49.9', merchant: '店铺' })).toEqual(['amount']);
     expect(changedCaptureFields({ amount: '10' }, { amount: '10' }, { amount: '49.9' }, { amount: 1 }, { amount: 3 })).toEqual(['amount']);
     expect(changedCaptureFields({}, {}, { amount: '49.9' })).toEqual([]);
+  });
+  it('shows only recognized or edited fields upfront and tucks empty or matching-currency fields away', () => {
+    const parsed = order();
+    const selected = suggestedCaptureFields(parsed, { assetId: 'CNY' }, new Set(), 'CNY');
+    const initial = partitionCaptureFields(parsed, { assetId: 'CNY' }, selected, {}, 'CNY');
+    expect(initial.recognized.map(([, target]) => target)).toEqual(['amount', 'date', 'time', 'orderNumber', 'trackingNumber']);
+    expect(initial.unrecognized.map(([, target]) => target)).toEqual(['merchant', 'description', 'assetId', 'invoiceNumber', 'invoiceCode', 'invoiceDate']);
+
+    const afterUncheck = { ...selected };
+    delete afterUncheck.orderNumber;
+    expect(partitionCaptureFields(parsed, { assetId: 'CNY' }, afterUncheck, {}, 'CNY').recognized.map(([, target]) => target)).toContain('orderNumber');
+    expect(partitionCaptureFields(parsed, { assetId: 'CNY' }, afterUncheck, { merchant: '瑞幸' }, 'CNY').recognized.map(([, target]) => target)).toContain('merchant');
   });
 });

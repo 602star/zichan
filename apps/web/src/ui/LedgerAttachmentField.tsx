@@ -91,10 +91,13 @@ export function LedgerAttachmentField({ id, rows, disabled, readFiles, load, rem
       </label>
     </div>
     {error && <p role="alert" className="zc-entry-field-error">{error}</p>}
-    {rows.map((row) => <div key={row.id} className="zc-attachment-item">
-      <div className="zc-attachment-item-header"><AttachmentPreview attachment={row} interactive alt={row.fileName} style={{ width: 80, height: 64, objectFit: 'cover', borderRadius: 'var(--r-sm)' }} /><div className="zc-attachment-item-info"><span>{row.fileName}</span><span className="zc-meta">{Math.ceil((row.sizeBytes ?? 0) / 1024)} KB · {active === row.id ? loading ? '正在读取图片' : '正在处理，尚未应用' : row.privacyReview ? (row.privacyReview.maskCount === 0 ? '已处理，图片未打码' : `已打码 ${row.privacyReview.maskCount ?? ''} 处`) : row.note?.startsWith('附件处理：') ? row.note.slice(5) : '尚未提取信息'}</span></div><div className="zc-attachment-actions">{download(row)}<button type="button" className="zc-btn" disabled={isDisabled} onClick={() => row.id && remove(row.id)}>移除</button>{['image', 'pdf'].includes(attachmentPreviewKind(row) ?? '') && <button type="button" className="zc-btn" disabled={isDisabled} onClick={() => void open(row)}>提取信息</button>}</div></div>
-      {active === row.id && file && <AttachmentProcessing file={file} pdfPages={pdfPages} values={values} versions={versions} manual={manual} assets={assets} onClose={close} onApply={async (application) => { if (!current.current.some((item) => item.id === row.id)) throw new Error('附件已移除，请重新选择。'); await apply(row.id!, application); close(); }} />}
-      {active === row.id && loading && <button type="button" className="zc-btn" onClick={close}>取消读取</button>}
-    </div>)}
+    {rows.map((row) => {
+      const processed = Boolean(row.privacyReview || row.note?.startsWith('附件处理：'));
+      return <div key={row.id} className="zc-attachment-item">
+        <div className="zc-attachment-item-header"><AttachmentPreview attachment={row} interactive alt={row.fileName} style={{ width: 80, height: 64, objectFit: 'cover', borderRadius: 'var(--r-sm)' }} /><div className="zc-attachment-item-info"><span>{row.fileName}</span><span className="zc-meta">{Math.ceil((row.sizeBytes ?? 0) / 1024)} KB · {active === row.id ? loading ? '正在读取图片…' : '正在提取信息' : row.privacyReview ? (row.privacyReview.maskCount === 0 ? '已处理，图片未打码' : `已打码 ${row.privacyReview.maskCount ?? ''} 处`) : row.note?.startsWith('附件处理：') ? row.note.slice(5) : '可提取金额与商家'}</span></div><div className="zc-attachment-actions">{download(row)}<button type="button" className="zc-btn" disabled={isDisabled} onClick={() => row.id && remove(row.id)}>移除</button>{['image', 'pdf'].includes(attachmentPreviewKind(row) ?? '') && <button type="button" className={processed ? 'zc-btn' : 'zc-btn zc-attachment-extract-btn'} disabled={isDisabled} onClick={() => void open(row)}>{processed ? '重新提取' : '提取信息'}</button>}</div></div>
+        {active === row.id && file && <AttachmentProcessing file={file} pdfPages={pdfPages} values={values} versions={versions} manual={manual} assets={assets} onClose={close} onApply={async (application) => { if (!current.current.some((item) => item.id === row.id)) throw new Error('附件已移除，请重新选择。'); await apply(row.id!, application); close(); }} />}
+        {active === row.id && loading && <button type="button" className="zc-btn zc-btn--sm" onClick={close}>取消读取</button>}
+      </div>;
+    })}
   </div>;
 }

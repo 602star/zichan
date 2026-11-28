@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { transactionForm } from '../src/forms.js';
-import { progressiveFieldGroups } from '../src/form-validation.js';
-import { optionalTransactionFields, transactionFormFieldOptions } from '../src/transactionFormPrefs.js';
+import { moreFieldsSummaryLabel, progressiveFieldGroups } from '../src/form-validation.js';
+import {
+  COMMON_TRANSACTION_FORM_FIELDS,
+  optionalTransactionFields,
+  transactionFormFieldGroups,
+  transactionFormFieldOptions,
+} from '../src/transactionFormPrefs.js';
 import { makeSnapshot } from './fixtures.js';
 
 const keys = (fields: { key: string }[]) => fields.map((f) => f.key);
@@ -12,7 +17,7 @@ describe('transaction form presentation', () => {
     expect(spec.compactDateTime).toBe(true);
     snap.setting!.transactionFormOptionalFields = 'locationName,locationId,note';
     expect(optionalTransactionFields(snap.setting, true)).toEqual(['locationId', 'note']);
-    expect(spec.optionalFieldOptions!.filter((field) => field.key.startsWith('location'))).toEqual([{ key: 'locationId', label: '地点' }]);
+    expect(spec.optionalFieldOptions!.filter((field) => field.key.startsWith('location'))).toEqual([{ key: 'locationId', label: '地点', group: 'daily' }]);
     const groups = progressiveFieldGroups(spec.fields, { type: 'expense' }, { locationName: '旧记录的手填地点' }, []);
     expect(keys(groups.core)).toContain('locationId');
     expect(keys(groups.core)).not.toContain('locationName');
@@ -108,5 +113,61 @@ describe('transaction form presentation', () => {
     const field = transactionForm(snap).fields.find((f) => f.key === 'accountId')!;
     const options = typeof field.options === 'function' ? field.options({ type: 'expense', accountId: account.id }) : field.options!;
     expect(options.find((o) => o.value === account.id)?.label).toContain('历史账户');
+  });
+
+  it('exposes all optional fields in three groups and lets currency and document fields be pinned', () => {
+    const snap = makeSnapshot();
+    const groupsWithAccounts = transactionFormFieldGroups(true);
+    expect(groupsWithAccounts.map((g) => ({ key: g.key, keys: g.fields.map((f) => f.key) }))).toEqual([
+      { key: 'daily', keys: ['payeeId', 'locationId', 'tagIds', 'note'] },
+      { key: 'ledger', keys: ['assetId', 'timezone', 'status'] },
+      { key: 'document', keys: ['orderNumber', 'trackingNumber', 'invoiceNumber', 'invoiceCode', 'invoiceDate'] },
+    ]);
+    const groupsWithoutAccounts = transactionFormFieldGroups(false);
+    expect(groupsWithoutAccounts.find((g) => g.key === 'ledger')!.fields.map((f) => f.key)).toEqual(['assetId', 'timezone']);
+    expect(COMMON_TRANSACTION_FORM_FIELDS).toEqual(['payeeId', 'locationId', 'tagIds', 'note']);
+
+    snap.setting!.transactionFormOptionalFields = 'assetId,orderNumber,invoiceNumber,note';
+    const preferred = optionalTransactionFields(snap.setting, true);
+    expect(preferred).toEqual(['assetId', 'orderNumber', 'invoiceNumber', 'note']);
+
+    const spec = transactionForm(snap);
+    const pinned = progressiveFieldGroups(spec.fields, { type: 'expense' }, {}, preferred);
+    expect(keys(pinned.core)).toEqual(expect.arrayContaining(['assetId', 'orderNumber', 'invoiceNumber', 'note']));
+    expect(keys(pinned.more)).toEqual(expect.arrayContaining(['payeeId', 'trackingNumber', 'invoiceCode', 'invoiceDate']));
+  });
+
+  it('orders optional fields from high-frequency daily fields to documents and full-width note', () => {
+    const snap = makeSnapshot();
+    const spec = transactionForm(snap);
+    expect(spec.fields[0]?.key).toBe('amount');
+    const visibleExpenseKeys = spec.fields
+      .filter((f) => !f.hidden && (!f.visibleWhen || f.visibleWhen({ type: 'expense' })))
+      .map((f) => f.key);
+    expect(visibleExpenseKeys).toEqual([
+      'amount', 'type', 'accountId', 'category',
+      'date', 'time', 'description', 'attachmentDrafts',
+      'assetId', 'payeeId', 'tagIds', 'locationId',
+      'status', 'timezone',
+      'orderNumber', 'trackingNumber', 'invoiceNumber', 'invoiceCode', 'invoiceDate',
+      'note',
+    ]);
+  });
+
+  it('keeps unpinned OCR document numbers tucked in more fields with a summary badge', () => {
+    const snap = makeSnapshot();
+    const spec = transactionForm(snap);
+    const defaults = Object.fromEntries(spec.fields.map((f) => [f.key, f.defaultValue ?? '']));
+    const values = { ...defaults, type: 'expense', orderNumber: '00001234567890', trackingNumber: 'SF1234567890' };
+    const groups = progressiveFieldGroups(spec.fields, values, values, COMMON_TRANSACTION_FORM_FIELDS);
+
+    expect(keys(groups.core)).not.toContain('orderNumber');
+    expect(keys(groups.core)).not.toContain('trackingNumber');
+    expect(keys(groups.more)).toEqual(expect.arrayContaining(['orderNumber', 'trackingNumber', 'invoiceNumber', 'invoiceCode', 'invoiceDate']));
+
+    expect(moreFieldsSummaryLabel(groups.more, defaults, false)).toBe(`更多字段（${groups.more.length}）`);
+    expect(moreFieldsSummaryLabel(groups.more, values, false)).toBe(`更多字段（${groups.more.length} · 已填：订单号、物流单号）`);
+    expect(moreFieldsSummaryLabel(groups.more, { ...values, invoiceNumber: '12345678' }, false)).toBe(`更多字段（${groups.more.length} · 已填 3 项：订单号、物流单号等）`);
+    expect(moreFieldsSummaryLabel(groups.more, values, true)).toBe(`收起更多字段（${groups.more.length} · 已填 2 项）`);
   });
 });

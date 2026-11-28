@@ -1,5 +1,5 @@
 import { Camera, Paperclip } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { type Category, type Payee } from '@zichan/core';
 import { ASSET_PRESETS, ASSET_PRESET_GROUPS, type AssetPresetCode } from '../assetPresets.js';
 import { loadAttachmentContent } from '../attachment-content.js';
@@ -66,6 +66,8 @@ export interface FieldDef {
   assetPresetOptions?: boolean;
   checkboxValues?: { checked: string; unchecked: string; label: string };
   half?: boolean; // render at half width (two-column grid)
+  /** Auto-grow textarea that starts at one line and blocks bare Enter newlines. */
+  singleLine?: boolean;
   section?: 'core' | 'more';
   lockedVisible?: boolean;
   /** Keep a field in 更多信息 even when required or populated. */
@@ -212,17 +214,16 @@ export function FormField(props: {
           {f.checkboxValues?.label ?? '启用'}
         </label>
       ) : f.type === 'textarea' ? (
-        <textarea
+        <AutoGrowTextarea
           id={fieldId}
           name={f.key}
-          className="zc-input"
           value={value}
           placeholder={f.placeholder}
-          onChange={(e) => set(f.key, e.target.value)}
-          style={{ minHeight: 96, resize: 'vertical', paddingTop: 10 }}
+          singleLine={f.singleLine}
           required={f.required}
-          aria-invalid={hasError || undefined}
-          aria-describedby={describedBy}
+          invalid={hasError}
+          describedBy={describedBy}
+          onChange={(next) => set(f.key, next)}
         />
       ) : f.type === 'file' && props.fileControl ? props.fileControl : f.type === 'file' ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -280,23 +281,16 @@ export function FormField(props: {
           aria-label={f.label} aria-invalid={hasError || undefined} aria-describedby={describedBy} onChange={(next) => set(f.key, next)} required={f.required} />
       ) : (
         <div className={`zc-input-with-suffix${f.key === 'amount' ? ' is-amount' : ''}`}>
-          <input
+          <ImeTextInput
             id={fieldId}
             name={f.key}
-            className="zc-input"
-            type="text"
-            inputMode={f.type === 'number' ? 'decimal' : undefined}
+            numeric={f.type === 'number'}
             value={value}
             placeholder={f.placeholder}
-            onChange={(e) => set(f.key, e.target.value)}
-            onBlur={f.type === 'number' ? (e) => {
-              const cleaned = sanitizeNumericInput(e.target.value);
-              if (cleaned !== e.target.value) set(f.key, cleaned);
-            } : undefined}
             required={f.required}
-            aria-invalid={hasError || undefined}
-            aria-describedby={describedBy}
-            style={{ flex: 1, minWidth: 0 }}
+            invalid={hasError}
+            describedBy={describedBy}
+            onChange={(next) => set(f.key, next)}
           />
           {suffix && (props.onSuffixClick ? (
             <button
@@ -323,6 +317,176 @@ export function FormField(props: {
       {!error && hint && <div id={hintId} className="zc-field-hint">{hint}</div>}
       {props.afterControl}
     </div>
+  );
+}
+
+function AutoGrowTextarea({
+  id,
+  name,
+  value,
+  placeholder,
+  singleLine = false,
+  required,
+  invalid,
+  describedBy,
+  onChange,
+}: {
+  id: string;
+  name: string;
+  value: string;
+  placeholder?: string;
+  singleLine?: boolean;
+  required?: boolean;
+  invalid?: boolean;
+  describedBy?: string;
+  onChange: (next: string) => void;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const composing = useRef(false);
+  const [draft, setDraft] = useState(value);
+
+  useEffect(() => {
+    if (!composing.current) setDraft(value);
+  }, [value]);
+
+  const resize = () => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    const minH = singleLine ? 40 : 88;
+    const maxH = singleLine ? 180 : 320;
+    const next = Math.max(minH, Math.min(el.scrollHeight + 2, maxH));
+    el.style.height = `${next}px`;
+    el.style.overflowY = el.scrollHeight > maxH ? 'auto' : 'hidden';
+  };
+
+  useLayoutEffect(resize, [draft, singleLine]);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    let lastWidth = Math.round(el.getBoundingClientRect().width);
+    const observer = new ResizeObserver((entries) => {
+      const width = Math.round(entries[0]?.contentRect.width ?? el.getBoundingClientRect().width);
+      if (width > 0 && width !== lastWidth) {
+        lastWidth = width;
+        resize();
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [singleLine]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const normalize = (text: string) => (singleLine ? text.replace(/[\r\n]+/g, ' ') : text);
+
+  return (
+    <textarea
+      ref={ref}
+      id={id}
+      name={name}
+      rows={singleLine ? 1 : 3}
+      className={`zc-input zc-autogrow-textarea${singleLine ? ' is-single-line' : ''}`}
+      value={draft}
+      placeholder={placeholder}
+      required={required}
+      aria-invalid={invalid || undefined}
+      aria-describedby={describedBy}
+      onCompositionStart={() => { composing.current = true; }}
+      onCompositionEnd={(event) => {
+        composing.current = false;
+        const next = normalize(event.currentTarget.value);
+        setDraft(next);
+        onChange(next);
+      }}
+      onChange={(event) => {
+        const raw = event.target.value;
+        if (composing.current || (event.nativeEvent as InputEvent).isComposing) {
+          setDraft(raw);
+          return;
+        }
+        const next = normalize(raw);
+        setDraft(next);
+        onChange(next);
+      }}
+      onBlur={() => {
+        if (composing.current) {
+          composing.current = false;
+          const next = normalize(draft);
+          setDraft(next);
+          if (next !== value) onChange(next);
+        }
+      }}
+      onKeyDown={singleLine ? (event) => {
+        if (event.key === 'Enter' && !event.nativeEvent.isComposing && !composing.current && !event.ctrlKey && !event.metaKey) {
+          event.preventDefault();
+        }
+      } : undefined}
+    />
+  );
+}
+
+function ImeTextInput({
+  id,
+  name,
+  numeric,
+  value,
+  placeholder,
+  required,
+  invalid,
+  describedBy,
+  onChange,
+}: {
+  id: string;
+  name: string;
+  numeric: boolean;
+  value: string;
+  placeholder?: string;
+  required?: boolean;
+  invalid?: boolean;
+  describedBy?: string;
+  onChange: (next: string) => void;
+}) {
+  const composing = useRef(false);
+  const [draft, setDraft] = useState(value);
+
+  useEffect(() => {
+    if (!composing.current) setDraft(value);
+  }, [value]);
+
+  return (
+    <input
+      id={id}
+      name={name}
+      className="zc-input"
+      type="text"
+      inputMode={numeric ? 'decimal' : undefined}
+      value={draft}
+      placeholder={placeholder}
+      onCompositionStart={() => { composing.current = true; }}
+      onCompositionEnd={(event) => {
+        composing.current = false;
+        const next = event.currentTarget.value;
+        setDraft(next);
+        onChange(next);
+      }}
+      onChange={(event) => {
+        const next = event.target.value;
+        setDraft(next);
+        if (composing.current || (event.nativeEvent as InputEvent).isComposing) return;
+        onChange(next);
+      }}
+      onBlur={(event) => {
+        composing.current = false;
+        const raw = event.target.value;
+        const next = numeric ? sanitizeNumericInput(raw) : raw;
+        setDraft(next);
+        if (next !== value) onChange(next);
+      }}
+      required={required}
+      aria-invalid={invalid || undefined}
+      aria-describedby={describedBy}
+      style={{ flex: 1, minWidth: 0 }}
+    />
   );
 }
 

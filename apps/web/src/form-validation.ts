@@ -97,7 +97,7 @@ export function progressiveFieldGroups<T extends FormFieldLike>(fields: T[], val
   const more: T[] = [];
   for (const field of fields) {
     if (!isFieldVisible(field, values)) continue;
-    if (field.keepInMore) {
+    if (field.keepInMore && !pinned.has(field.key)) {
       more.push(field);
       continue;
     }
@@ -106,4 +106,23 @@ export function progressiveFieldGroups<T extends FormFieldLike>(fields: T[], val
     ((field.section !== 'more' && !compact.has(field.key)) || (field.required && !compact.has(field.key)) || (field.lockedVisible && !compact.has(field.key)) || pinned.has(field.key) || hasData ? core : more).push(field);
   }
   return { core, more };
+}
+
+/** Concise summary label for the collapsible "更多字段" bar, surfacing filled unpinned fields. */
+export function moreFieldsSummaryLabel(
+  fields: readonly FormFieldLike[],
+  values: Record<string, string>,
+  expanded: boolean,
+): string {
+  const prefix = expanded ? '收起更多字段' : '更多字段';
+  const populated = fields.filter((field) => {
+    const value = [field.key, ...(field.relatedValueKeys ?? [])].map((key) => values[key]?.trim()).find(Boolean) ?? '';
+    return value !== '' && value !== '[]' && value !== '{}' && value !== (field.defaultValue ?? '');
+  });
+  if (populated.length === 0) return `${prefix}（${fields.length}）`;
+  if (expanded) return `${prefix}（${fields.length} · 已填 ${populated.length} 项）`;
+  const names = populated.slice(0, 2).map((field) => field.label).join('、');
+  return populated.length <= 2
+    ? `${prefix}（${fields.length} · 已填：${names}）`
+    : `${prefix}（${fields.length} · 已填 ${populated.length} 项：${names}等）`;
 }

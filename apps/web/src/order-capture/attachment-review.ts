@@ -21,3 +21,29 @@ export function suggestedCaptureFields(order: ParsedOrder, values: Record<string
 export function changedCaptureFields(baseline: Record<string, string>, current: Record<string, string>, selected: Record<string, string>, previousVersions: Record<string, number> = {}, versions: Record<string, number> = {}): string[] {
   return Object.keys(selected).filter((key) => (baseline[key] ?? '') !== (current[key] ?? '') || (previousVersions[key] ?? 0) !== (versions[key] ?? 0));
 }
+
+export function partitionCaptureFields(
+  order: ParsedOrder | undefined,
+  values: Record<string, string>,
+  selected: Record<string, string>,
+  edits: Record<string, string>,
+  recognizedCurrencyId?: string,
+) {
+  const recognizedValue = (source: (typeof captureFields)[number][0]) => (
+    source === 'currency'
+      ? recognizedCurrencyId
+      : order?.fields[source].value ?? order?.fields[source].candidates[0]?.value
+  );
+  const isRecognized = ([source, target]: (typeof captureFields)[number]) => {
+    if (Object.hasOwn(edits, target) || Object.hasOwn(selected, target)) return true;
+    const rec = recognizedValue(source);
+    if (!rec) return false;
+    if (target === 'assetId' && rec === values.assetId) return false;
+    return true;
+  };
+  return {
+    recognized: captureFields.filter(isRecognized),
+    unrecognized: captureFields.filter((row) => !isRecognized(row)),
+    recognizedValue,
+  };
+}

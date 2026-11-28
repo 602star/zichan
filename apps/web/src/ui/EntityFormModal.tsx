@@ -33,6 +33,7 @@ import {
 } from '../db/form-drafts.js';
 import {
   emptyOptionHint,
+  moreFieldsSummaryLabel,
   progressiveFieldGroups,
   isFieldVisible,
   isMoreFieldVisible,
@@ -390,7 +391,9 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
   const supportsContinue = !!onSaveContinue;
   const amountFirst = spec.fields[0]?.key === 'amount';
   useEffect(() => {
-    if ((workspace === 'composer' || supportsContinue || amountFirst) && creating && !compactView && draftReady && !pendingDraft) {
+    if ((workspace === 'composer' || supportsContinue || amountFirst) && creating && !compactView && draftReady && !pendingDraft && !touched.current) {
+      const active = document.activeElement;
+      if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement) return;
       focusAttempts.current = 0;
       setPendingFocus('amount');
     }
@@ -849,7 +852,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
               setMoreOpen(!moreExpanded);
             }}
             style={{ cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}
-          >{spec.progressiveFields ? `${moreExpanded ? '收起更多字段' : '更多字段'}（${visibleMoreFields.length}）` : '更多信息'}</summary>
+          >{spec.progressiveFields ? moreFieldsSummaryLabel(visibleMoreFields, values, moreExpanded) : '更多信息'}</summary>
           {visibleMoreFields.length === 0 ? (
             <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 10 }}>可在“字段显示”里选择要显示的附加字段。</div>
           ) : (
